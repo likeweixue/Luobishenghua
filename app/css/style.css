@@ -577,3 +577,60 @@ button.active { background: var(--accent); border-color: var(--accent); color: #
   z-index: 200;
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- 历史面板 ---------- */
+.hist-head {
+  display: flex; align-items: center; gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--panel-border);
+  margin-bottom: 4px;
+}
+.hist-head button { padding: 3px 9px; font-size: 11px; }
+.hist-mem {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+#history-list { max-height: 210px; overflow-y: auto; }
+.hist-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #b9b9c0;
+  cursor: pointer;
+}
+.hist-row:hover { background: rgba(255, 255, 255, 0.05); }
+.hist-row.current {
+  background: var(--accent-dim);
+  outline: 1px solid rgba(74, 144, 217, 0.45);
+  color: #fff;
+}
+.hist-row.future { opacity: 0.42; }
+.hist-row .hidx {
+  width: 18px; flex-shrink: 0;
+  text-align: right;
+  font-size: 10px;
+  color: #74747c;
+  font-variant-numeric: tabular-nums;
+}
+.hist-row.current .hidx { color: #9dc7ef; }
+.hist-row .hlabel { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- 崩溃恢复横幅 ---------- */
+.recovery {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 44px 10px;
+  padding: 10px 14px;
+  background: rgba(74, 144, 217, 0.10);
+  border: 1px solid rgba(74, 144, 217, 0.42);
+  border-radius: 9px;
+  font-size: 12px;
+}
+.recovery.hidden { display: none; }
+.recovery .rec-ic { font-size: 15px; color: #7fb4e8; }
+.recovery .rec-text { flex: 1; }
+.recovery .rec-text b { font-weight: 600; }
+.recovery .rec-time { color: var(--text-dim); margin-left: 6px; }
+.recovery button { padding: 4px 12px; }

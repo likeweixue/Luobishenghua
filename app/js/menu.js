@@ -35,7 +35,11 @@ export function initMenuBar(actions) {
         { label: '首页 / 最近文件', action: 'home' },
         { sep: true },
         { label: '新建文档…', shortcut: '⌘N', action: 'newDoc' },
-        { label: '打开 PSD…', shortcut: '⌘O', action: 'openPSD' },
+        { label: '打开工程…', shortcut: '⌘O', action: 'openProject' },
+        { label: '打开 PSD…', action: 'openPSD' },
+        { sep: true },
+        { label: '保存工程', shortcut: '⌘S', action: 'saveProject' },
+        { label: '工程另存为…', shortcut: '⇧⌘S', action: 'saveAsProject' },
         { sep: true },
         { label: '导出 PNG', action: 'exportPNG' },
         { label: '导出 PSD（分层）', action: 'exportPSD' },
@@ -172,9 +176,9 @@ export function aboutDialog() {
   showModal('关于落笔生花', `
     <div class="about">
       <div class="about-name">落笔生花</div>
-      <div class="about-en">Luobishenghua · beta4</div>
+      <div class="about-en">Luobishenghua · beta5</div>
       <p>一款正在生长的绘画软件。</p>
-      <p>压感笔刷引擎 · 多层混合 · PSD 分层互通 · .abr 笔刷生态<br>全部为手写零依赖实现</p>
+      <p>压感笔刷引擎 · 多层混合 · PSD 分层互通 · .abr 笔刷生态<br>原生工程 .lbsh · 增量撤销 · 自动保存与崩溃恢复<br>全部为手写零依赖实现</p>
       <p class="about-credit">开发：WorkBuddy × likeweixue</p>
     </div>`);
 }
@@ -185,7 +189,9 @@ export function shortcutsDialog() {
       <tr><td><kbd>B</kbd> / <kbd>E</kbd> / <kbd>H</kbd></td><td>画笔 / 橡皮 / 抓手</td></tr>
       <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>笔刷减小 / 增大</td></tr>
       <tr><td><kbd>⌘Z</kbd> / <kbd>⇧⌘Z</kbd></td><td>撤销 / 重做</td></tr>
-      <tr><td><kbd>⌘N</kbd> / <kbd>⌘O</kbd></td><td>新建文档 / 打开 PSD</td></tr>
+      <tr><td><kbd>⌘N</kbd></td><td>新建文档</td></tr>
+      <tr><td><kbd>⌘O</kbd></td><td>打开工程（.lbsh）</td></tr>
+      <tr><td><kbd>⌘S</kbd> / <kbd>⇧⌘S</kbd></td><td>保存工程 / 另存为</td></tr>
       <tr><td><kbd>0</kbd></td><td>复位视图</td></tr>
       <tr><td><kbd>空格</kbd> + 拖动</td><td>平移画布</td></tr>
       <tr><td>双指滚动</td><td>平移画布</td></tr>
@@ -199,7 +205,10 @@ export function settingsDialog(settings, onApply) {
   showModal('偏好设置', `
     <div class="form">
       <label>撤销步数上限
-        <input type="number" id="set-undo" min="5" max="50" value="${settings.undoLimit}">
+        <input type="number" id="set-undo" min="5" max="100" value="${settings.undoLimit}">
+      </label>
+      <label>自动保存间隔（秒）
+        <input type="number" id="set-autosave" min="10" max="600" value="${settings.autosaveSec || 60}">
       </label>
       <label>新建画布默认宽度
         <input type="number" id="set-w" min="100" max="8192" value="${settings.defaultWidth}">
@@ -211,7 +220,8 @@ export function settingsDialog(settings, onApply) {
     </div>`, (modal) => {
     modal.querySelector('#set-ok').addEventListener('click', () => {
       onApply({
-        undoLimit: Math.max(5, Math.min(50, +modal.querySelector('#set-undo').value || 25)),
+        undoLimit: Math.max(5, Math.min(100, +modal.querySelector('#set-undo').value || 50)),
+        autosaveSec: Math.max(10, Math.min(600, +modal.querySelector('#set-autosave').value || 60)),
         defaultWidth: Math.max(100, Math.min(8192, +modal.querySelector('#set-w').value || 1600)),
         defaultHeight: Math.max(100, Math.min(8192, +modal.querySelector('#set-h').value || 1600)),
       });

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>N1 TEST</title></head>
+<body>
+<pre id="out">running…</pre>
+<script type="module">
+import { LayerStack } from './app/js/layers.js';
+import { History } from './app/js/history.js';
+import { serializeProject, deserializeProject } from './app/js/project.js';
+
+const out = [];
+let pass = 0, fail = 0;
+const check = (cond, label, extra = '') => {
+  if (cond) { pass++; out.push('✅ ' + label); }
+  else { fail++; out.push('❌ ' + label + (extra ? ' — ' + extra : '')); }
+};
+
+function px(layer, x, y) {
+  const ctx = layer.ctx || layer.canvas.getContext('2d');
+  const d = ctx.getImageData(x, y, 1, 1).data;
+  return [d[0], d[1], d[2], d[3]];
+}
+
+async function run() {
+  /* ---------- 1. 工程序列化往返 ---------- */
+  const layers = new LayerStack(200, 150);
+  const active = layers.active;
+  active.name = '线稿层';
+  active.opacity = 0.75;
+  active.blend = 'multiply';
+  active.ctx.fillStyle = '#e24b4a';
+  active.ctx.fillRect(10, 10, 30, 30);
+
+  const { bytes, manifest } = await serializeProject(layers, { doc: null });
+  check(bytes.length > 100, '序列化产出字节数 ' + bytes.length);
+  check(manifest.width === 200 && manifest.height === 150, 'manifest 尺寸正确');
+  check(manifest.layers.length === 2, 'manifest 图层数 2（含纸张）');
+
+  const proj = await deserializeProject(bytes);
+  check(proj.width === 200 && proj.height === 150, '反序列化尺寸正确');
+  check(proj.layers.length === 2, '反序列化图层数 2');
+  const back = proj.layers[1];
+  check(back.name === '线稿层', '图层名保留（中文）');
+  check(Math.abs(back.opacity - 0.75) < 0.01, '不透明度保留');
+  check(back.blend === 'multiply', '混合模式保留');
+  const p1 = px(active, 20, 20), p2 = px(back, 20, 20);
+  check(p1.join(',') === p2.join(','), '像素零差异', p1 + ' vs ' + p2);
+  check(px(back, 100, 100)[3] === 0, '空白区仍透明');
+
+  /* ---------- 2. 瓦片增量撤销 ---------- */
+  const engine = { render() {} };
+  const hist = new History(engine, layers, 50);
+  const before = px(active, 60, 60);
+  const j = hist.beginStroke(active.id);
+  j.captureBefore(60, 60, 12);
+  active.ctx.fillStyle = '#000000';
+  active.ctx.beginPath();
+  active.ctx.arc(60, 60, 6, 0, Math.PI * 2);
+  active.ctx.fill();
+  const committed = hist.commitStroke(j, '测试笔画');
+  check(committed === true, '笔画提交成功');
+  const drawn = px(active, 60, 60);
+  check(drawn[0] < 40, '笔画确实画上了');
+
+  check(hist.memoryBytes() > 0, '增量快照占用 ' + hist.memoryBytes() + ' 字节');
+  check(hist.memoryBytes() < 200 * 150 * 4 * 2, '占用小于整层两份快照（增量生效）');
+
+  hist.undo();
+  check(px(active, 60, 60).join(',') === before.join(','), '撤销后像素还原');
+  hist.redo();
+  check(px(active, 60, 60)[0] < 40, '重做后笔画恢复');
+
+  /* ---------- 3. 时间轴与跳转 ---------- */
+  const tl = hist.timeline();
+  check(tl.length === 2, '时间轴 2 项（初始 + 1 步）');
+  check(tl[0].label === '初始状态' && tl[1].label === '测试笔画', '步骤标签正确');
+  check(tl[1].current === true, '当前位置正确');
+
+  hist.jumpTo(0);
+  check(px(active, 60, 60).join(',') === before.join(','), 'jumpTo(0) 回到初始');
+  hist.jumpTo(1);
+  check(px(active, 60, 60)[0] < 40, 'jumpTo(1) 回到笔画后');
+
+  /* ---------- 4. 多步 + 结构级混合 ---------- */
+  for (let i = 0; i < 3; i++) {
+    const jj = hist.beginStroke(active.id);
+    jj.captureBefore(100 + i * 10, 100, 5);
+    active.ctx.fillStyle = '#378add';
+    active.ctx.fillRect(98 + i * 10, 98, 6, 6);
+    hist.commitStroke(jj, '笔画 ' + (i + 1));
+  }
+  check(hist.timeline().length === 5, '多步后时间轴 5 项');
+  hist.pushFull('新建图层');
+  layers.addLayer();
+  check(hist.timeline().length === 6, '结构操作入栈');
+  hist.jumpTo(0);
+  check(layers.layers.length === 2, 'jumpTo(0) 结构也回滚（图层数 2）', '实际 ' + layers.layers.length);
+
+  const text = out.join('\n');
+  document.getElementById('out').textContent = text + `\n\n结果：${pass} 通过 / ${fail} 失败`;
+  document.title = fail ? 'FAIL ' + fail : 'PASS ' + pass;
+}
+
+run().catch(err => {
+  document.getElementById('out').textContent = '异常：' + err.stack;
+  document.title = 'ERROR';
+});
+</script>
+</body>
+</html>

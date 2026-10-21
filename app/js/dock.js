@@ -67,9 +67,9 @@ export class Dock {
     return p && !p.classList.contains('panel-hidden');
   }
 
-  // 恢复默认布局（左侧：工具/笔刷仓库/颜色；右侧：导航器/图层）
+  // 恢复默认布局（左侧：工具/笔刷仓库/颜色；右侧：导航器/图层/历史）
   resetLayout() {
-    const defaults = { left: ['tools', 'brushes', 'color'], right: ['navigator', 'layers'] };
+    const defaults = { left: ['tools', 'brushes', 'color'], right: ['navigator', 'layers', 'history'] };
     for (const [side, ids] of Object.entries(defaults)) {
       ids.forEach((id, i) => {
         const p = this.panels.find(p => p.dataset.panel === id);
@@ -89,6 +89,12 @@ export class Dock {
     return this.panels
       .filter(p => p.dataset.dock === side && !p.classList.contains('panel-hidden'))
       .sort((a, b) => (+a.dataset.order || 0) - (+b.dataset.order || 0));
+  }
+
+  // 面板内容高度变化后重新排布两列（图层/历史/笔刷数量变化时调用）
+  reflowBoth() {
+    this.reflow('left');
+    this.reflow('right');
   }
 
   reflow(side) {

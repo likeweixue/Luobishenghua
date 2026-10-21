@@ -159,6 +159,8 @@ export class LayerStack {
 
   /* ---------- 历史快照（结构级） ---------- */
 
+  // 结构级快照：只存元数据 + 画布引用（结构操作不改像素，顺序回放保证内容正确）
+  // 这样加/删/移动/显隐等操作几乎不占内存，撤销也不会整层复制。
   snapshotFull() {
     return {
       activeId: this.activeId,
@@ -170,23 +172,17 @@ export class LayerStack {
         opacity: l.opacity,
         blend: l.blend,
         locked: l.locked,
-        snap: this._copyCanvas(l.canvas),
+        canvas: l.canvas,
       })),
     };
   }
 
   restoreFull(state) {
-    this.layers = state.layers.map(m => {
-      const canvas = document.createElement('canvas');
-      canvas.width = this.w;
-      canvas.height = this.h;
-      canvas.getContext('2d').drawImage(m.snap, 0, 0);
-      return {
-        id: m.id, name: m.name, visible: m.visible,
-        opacity: m.opacity, blend: m.blend, locked: m.locked,
-        canvas, ctx: canvas.getContext('2d'),
-      };
-    });
+    this.layers = state.layers.map(m => ({
+      id: m.id, name: m.name, visible: m.visible,
+      opacity: m.opacity, blend: m.blend, locked: m.locked,
+      canvas: m.canvas, ctx: m.canvas.getContext('2d'),
+    }));
     this.nextId = state.nextId;
     this.activeId = this.byId(state.activeId) ? state.activeId : this.layers[this.layers.length - 1].id;
     this._changed();

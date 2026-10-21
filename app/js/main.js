@@ -5,11 +5,13 @@ import { BrushPresets, BrushRegistry, registerCustomBrush, brushThumbnail, press
 import { readABR } from './abr.js';
 import { initMenuBar, aboutDialog, shortcutsDialog, settingsDialog, newDocDialog } from './menu.js';
 import { createHome, addRecent, toast } from './home.js';
+import { serializeProject, deserializeProject, PROJECT_EXT } from './project.js';
+import { idbPut, idbGet, idbDelete } from './idb.js';
 
 /* ---------------- 设置（localStorage 持久化） ---------------- */
 
 const settings = Object.assign(
-  { undoLimit: 25, defaultWidth: 1600, defaultHeight: 1600 },
+  { undoLimit: 50, defaultWidth: 1600, defaultHeight: 1600, autosaveSec: 60 },
   JSON.parse(localStorage.getItem('lbsh-settings') || '{}')
 );
 function saveSettings() {
@@ -44,7 +46,25 @@ const state = {
   last: null,
   spacingLeft: 0,
   panLast: null,
+  journal: null,          // 当前笔画的瓦片快照日志
 };
+
+/* ---------------- 工程状态 ---------------- */
+
+const AUTOSAVE_KEY = 'autosave';
+let currentProjectPath = null;
+let currentProjectName = '未命名.lbsh';
+let dirty = false;
+let autosaveTimer = null;
+let autosaving = false;
+let suppressDirty = false;
+
+// 载入/新建文档时重置历史，且不算「脏」
+function resetHistory() {
+  suppressDirty = true;
+  history.clear();
+  suppressDirty = false;
+}
 
 /* ---------------- 首页 ---------------- */
 
@@ -100,6 +120,7 @@ function renderBrushGrid() {
     btn.addEventListener('click', () => setBrush(id));
     presetsEl.appendChild(btn);
   }
+  dock.reflowBoth();
 }
 renderBrushGrid();
 
@@ -218,7 +239,7 @@ function renderLayerPanel() {
     eye.title = '显示/隐藏';
     eye.addEventListener('click', (e) => {
       e.stopPropagation();
-      history.pushFull();
+      history.pushFull('显示/隐藏图层');
       layers.setVisible(l.id, !l.visible);
       engine.render();
       updateStatus();
@@ -238,7 +259,7 @@ function renderLayerPanel() {
       if (l.locked) return;
       const n = prompt('图层名称', l.name);
       if (n && n.trim()) {
-        history.pushFull();
+        history.pushFull('重命名图层');
         layers.rename(l.id, n);
       }
     });
@@ -252,6 +273,7 @@ function renderLayerPanel() {
   }
   refreshThumbs();
   syncLayerControls();
+  dock.reflowBoth();
 }
 
 function refreshThumbs() {
@@ -282,36 +304,36 @@ function syncLayerControls() {
 }
 
 document.getElementById('btn-layer-add').addEventListener('click', () => {
-  history.pushFull();
+  history.pushFull('新建图层');
   layers.addLayer();
   engine.render();
   updateStatus();
 });
 document.getElementById('btn-layer-del').addEventListener('click', () => {
   if (!confirm(`删除「${layers.active.name}」？（可用撤销恢复）`)) return;
-  history.pushFull();
+  history.pushFull('删除图层');
   layers.deleteActive();
   engine.render();
   updateStatus();
 });
 document.getElementById('btn-layer-up').addEventListener('click', () => {
-  history.pushFull();
-  if (!layers.moveActive(1)) history.undoStack.pop();
+  history.pushFull('上移图层');
+  if (!layers.moveActive(1)) history.dropLast();
   engine.render();
   updateStatus();
 });
 document.getElementById('btn-layer-down').addEventListener('click', () => {
-  history.pushFull();
-  if (!layers.moveActive(-1)) history.undoStack.pop();
+  history.pushFull('下移图层');
+  if (!layers.moveActive(-1)) history.dropLast();
   engine.render();
   updateStatus();
 });
 blendSelect.addEventListener('change', () => {
-  history.pushFull();
+  history.pushFull('混合模式');
   layers.setBlend(blendSelect.value);
   engine.render();
 });
-layerOpacityInput.addEventListener('pointerdown', () => history.pushFull()); // 拖动前记一次历史
+layerOpacityInput.addEventListener('pointerdown', () => history.pushFull('图层不透明度')); // 拖动前记一次历史
 layerOpacityInput.addEventListener('input', () => {
   layers.setOpacity(+layerOpacityInput.value / 100);
   document.getElementById('layer-opacity-val').textContent = layerOpacityInput.value;
@@ -319,6 +341,217 @@ layerOpacityInput.addEventListener('input', () => {
 });
 
 layers.onChange = () => renderLayerPanel();
+
+/* ---------------- 历史面板 ---------------- */
+
+const historyListEl = document.getElementById('history-list');
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function fmtBytes(n) {
+  if (!n) return '0';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function refreshHistoryPanel() {
+  if (!historyListEl) return;
+  const items = history.timeline();
+  const frag = document.createDocumentFragment();
+  for (const it of items) {
+    const row = document.createElement('div');
+    row.className = 'hist-row' + (it.current ? ' current' : '') + (it.future ? ' future' : '');
+    row.title = it.label;
+    row.innerHTML = `<span class="hidx">${it.index}</span><span class="hlabel">${escapeHtml(it.label)}</span>`;
+    row.addEventListener('click', () => {
+      history.jumpTo(it.index);
+      refreshThumbs();
+      updateStatus();
+    });
+    frag.appendChild(row);
+  }
+  historyListEl.innerHTML = '';
+  historyListEl.appendChild(frag);
+  const cur = historyListEl.querySelector('.hist-row.current');
+  if (cur) cur.scrollIntoView({ block: 'nearest' });
+  const mem = document.getElementById('hist-memory');
+  if (mem) {
+    const used = history.memoryBytes();
+    mem.textContent = `${history.position} 步` + (used ? ` · ${fmtBytes(used)}` : '');
+  }
+  if (dock) dock.reflowBoth();
+}
+
+history.onChange = () => {
+  refreshHistoryPanel();
+  if (!suppressDirty) dirty = true;
+  const btnU = document.getElementById('btn-hist-undo');
+  const btnR = document.getElementById('btn-hist-redo');
+  if (btnU) btnU.disabled = !history.canUndo;
+  if (btnR) btnR.disabled = !history.canRedo;
+};
+document.getElementById('btn-hist-undo').addEventListener('click', () => { history.undo(); refreshThumbs(); updateStatus(); });
+document.getElementById('btn-hist-redo').addEventListener('click', () => { history.redo(); refreshThumbs(); updateStatus(); });
+
+/* ---------------- 工程文件（.lbsh） ---------------- */
+
+function setAutosaveStatus(text) {
+  const el = document.getElementById('status-autosave');
+  if (el) el.textContent = text;
+}
+
+async function applyProject(project, meta = {}) {
+  layers.reset(project.width, project.height);
+  for (const def of project.layers) layers.pushLayer(def);
+  const idx = Math.max(0, Math.min(project.activeIndex || 0, layers.layers.length - 1));
+  layers.activeId = layers.layers[idx].id;
+
+  engine.setDocSize(project.width, project.height);
+  document.getElementById('status-doc').textContent = `画布 ${project.width} × ${project.height}`;
+  resetHistory();
+  renderLayerPanel();
+  engine.resize();
+  engine.fit();
+  updateStatus();
+
+  currentProjectPath = meta.path || null;
+  currentProjectName = meta.name || `未命名.${PROJECT_EXT}`;
+  dirty = false;
+  addRecent({ name: currentProjectName, path: currentProjectPath, w: project.width, h: project.height });
+  hideHome();
+  setAutosaveStatus('未修改');
+  toast(`已打开 ${currentProjectName}`);
+}
+
+async function saveProject({ saveAs = false } = {}) {
+  try {
+    setAutosaveStatus('正在保存…');
+    const { bytes } = await serializeProject(layers, engine);
+    if (TAURI && TAURI.dialog && TAURI.fs) {
+      let path = saveAs ? null : currentProjectPath;
+      if (!path) {
+        path = await TAURI.dialog.save({
+          defaultPath: currentProjectName || `未命名.${PROJECT_EXT}`,
+          filters: [{ name: '落笔生花工程', extensions: [PROJECT_EXT] }],
+        });
+      }
+      if (!path) { setAutosaveStatus('未保存'); return false; }
+      await TAURI.fs.writeFile(path, bytes);
+      currentProjectPath = path;
+      currentProjectName = path.split(/[\\/]/).pop();
+    } else {
+      await saveBytes(bytes, currentProjectName || `luobishenghua.${PROJECT_EXT}`, '落笔生花工程', [PROJECT_EXT]);
+    }
+    dirty = false;
+    await idbDelete(AUTOSAVE_KEY);
+    setAutosaveStatus('已保存');
+    addRecent({ name: currentProjectName, path: currentProjectPath, w: layers.w, h: layers.h });
+    toast('工程已保存');
+    return true;
+  } catch (err) {
+    setAutosaveStatus('保存失败');
+    alert('保存工程失败：' + err.message);
+    return false;
+  }
+}
+
+async function openProjectFromBytes(buf, name, path = null) {
+  try {
+    const project = await deserializeProject(buf);
+    await applyProject(project, { name, path });
+  } catch (err) {
+    alert('打开工程失败：' + err.message);
+  }
+}
+
+async function openProjectDialog() {
+  if (TAURI && TAURI.dialog && TAURI.fs) {
+    try {
+      const path = await TAURI.dialog.open({
+        multiple: false,
+        filters: [{ name: '落笔生花工程', extensions: [PROJECT_EXT] }],
+      });
+      if (!path) return;
+      const bytes = await TAURI.fs.readFile(path);
+      await openProjectFromBytes(bytes, path.split(/[\\/]/).pop(), path);
+    } catch (err) {
+      alert('打开工程失败：' + err.message);
+    }
+    return;
+  }
+  document.getElementById('file-open-project').click();
+}
+
+document.getElementById('file-open-project').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (f) f.arrayBuffer().then(b => openProjectFromBytes(new Uint8Array(b), f.name));
+  e.target.value = '';
+});
+
+/* ---------------- 自动保存 / 崩溃恢复 ---------------- */
+
+async function doAutosave(force = false) {
+  if (autosaving) return;
+  if (!dirty && !force) return;
+  autosaving = true;
+  try {
+    const { bytes } = await serializeProject(layers, engine);
+    await idbPut(AUTOSAVE_KEY, {
+      bytes,
+      ts: Date.now(),
+      name: currentProjectName,
+      width: layers.w,
+      height: layers.h,
+    });
+    setAutosaveStatus('已自动保存 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
+  } catch (err) {
+    console.warn('[autosave]', err);
+    setAutosaveStatus('自动保存失败');
+  } finally {
+    autosaving = false;
+  }
+}
+
+function scheduleAutosave() {
+  clearInterval(autosaveTimer);
+  const sec = Math.max(10, settings.autosaveSec || 60);
+  autosaveTimer = setInterval(() => doAutosave(false), sec * 1000);
+}
+
+let recoveryRecord = null;
+
+async function checkRecovery() {
+  try {
+    const rec = await idbGet(AUTOSAVE_KEY);
+    if (!rec || !rec.bytes) return;
+    recoveryRecord = rec;
+    const banner = document.getElementById('recovery-banner');
+    if (!banner) return;
+    document.getElementById('recovery-name').textContent = rec.name || `未命名.${PROJECT_EXT}`;
+    document.getElementById('recovery-time').textContent = new Date(rec.ts).toLocaleString('zh-CN', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    });
+    banner.classList.remove('hidden');
+  } catch (err) {
+    console.warn('[recovery]', err);
+  }
+}
+
+document.getElementById('recovery-restore').addEventListener('click', async () => {
+  if (!recoveryRecord) return;
+  const rec = recoveryRecord;
+  document.getElementById('recovery-banner').classList.add('hidden');
+  await openProjectFromBytes(rec.bytes, rec.name, null);
+});
+
+document.getElementById('recovery-discard').addEventListener('click', async () => {
+  recoveryRecord = null;
+  document.getElementById('recovery-banner').classList.add('hidden');
+  try { await idbDelete(AUTOSAVE_KEY); } catch { /* ignore */ }
+});
 
 /* ---------------- 顶栏操作 ---------------- */
 
@@ -339,7 +572,7 @@ function clearActiveLayer() {
   const l = layers.active;
   if (!l) return;
   if (!confirm(`清空「${l.name}」的内容？（可用撤销恢复）`)) return;
-  history.pushPaint();
+  const before = history.captureLayer(l.id);
   l.ctx.save();
   l.ctx.globalCompositeOperation = 'source-over';
   if (l.locked) {
@@ -349,6 +582,7 @@ function clearActiveLayer() {
     l.ctx.clearRect(0, 0, layers.w, layers.h);
   }
   l.ctx.restore();
+  history.pushLayerDiff(l.id, before, '清空图层');
   engine.render();
   refreshThumbs();
   updateStatus();
@@ -408,7 +642,7 @@ function loadDocumentFromPSD(psd, meta = {}) {
   layers.activeId = layers.layers[layers.layers.length - 1].id;
   engine.setDocSize(psd.width, psd.height);
   document.getElementById('status-doc').textContent = `画布 ${psd.width} × ${psd.height}`;
-  history.clear();
+  resetHistory();
   renderLayerPanel();
   engine.resize();
   engine.fit();
@@ -419,6 +653,11 @@ function loadDocumentFromPSD(psd, meta = {}) {
     w: psd.width,
     h: psd.height,
   });
+  // PSD 只是导入，还没有对应的 .lbsh 工程文件
+  currentProjectPath = null;
+  currentProjectName = (meta.name || '未命名').replace(/\.[^.]+$/, '') + '.' + PROJECT_EXT;
+  dirty = true;
+  setAutosaveStatus('未保存');
   hideHome();
 }
 
@@ -467,6 +706,7 @@ stage.addEventListener('dragover', (e) => e.preventDefault());
 stage.addEventListener('drop', (e) => {
   e.preventDefault();
   for (const f of e.dataTransfer.files) {
+    if (/\.lbsh$/i.test(f.name)) { f.arrayBuffer().then(b => openProjectFromBytes(new Uint8Array(b), f.name)); return; }
     if (/\.psd$/i.test(f.name)) { openPSDFile(f); return; }
     if (/\.abr$/i.test(f.name)) { importABRFile(f); return; }
   }
@@ -477,11 +717,13 @@ if (TAURI && TAURI.event) {
   TAURI.event.listen('tauri://drag-drop', async (ev) => {
     const paths = (ev.payload && ev.payload.paths) || [];
     for (const p of paths) {
-      if (!/\.(psd|abr)$/i.test(p)) continue;
+      if (!/\.(psd|abr|lbsh)$/i.test(p)) continue;
       try {
         const bytes = await TAURI.fs.readFile(p);
         const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        if (/\.psd$/i.test(p)) {
+        if (/\.lbsh$/i.test(p)) {
+          await openProjectFromBytes(new Uint8Array(buf), p.split(/[\\/]/).pop(), p);
+        } else if (/\.psd$/i.test(p)) {
           const psd = readPSD(buf);
           const name = p.split(/[\\/]/).pop();
           loadDocumentFromPSD(psd, { name, path: p });
@@ -541,12 +783,16 @@ function newDocument(w, h) {
   layers.activeId = l1.id;
   engine.setDocSize(w, h);
   document.getElementById('status-doc').textContent = `画布 ${w} × ${h}`;
-  history.clear();
+  resetHistory();
   renderLayerPanel();
   engine.resize();
   engine.fit();
   updateStatus();
-  addRecent({ name: `未命名 ${++untitledCount}`, w, h });
+  currentProjectPath = null;
+  currentProjectName = `未命名 ${untitledCount}.${PROJECT_EXT}`;
+  dirty = false;
+  setAutosaveStatus('未修改');
+  addRecent({ name: currentProjectName, w, h });
   hideHome();
 }
 
@@ -589,6 +835,9 @@ initMenuBar({
   about: aboutDialog,
   home: () => homeApi && homeApi.show(),
   newDoc: () => newDocDialog(settings, (w, h) => newDocument(w, h)),
+  openProject: () => openProjectDialog(),
+  saveProject: () => saveProject(),
+  saveAsProject: () => saveProject({ saveAs: true }),
   openPSD: () => openPSDDialog(),
   exportPNG: doExportPNG,
   exportPSD: doExportPSD,
@@ -612,6 +861,7 @@ initMenuBar({
     Object.assign(settings, s);
     history.limit = settings.undoLimit;
     saveSettings();
+    scheduleAutosave();
   }),
   shortcuts: shortcutsDialog,
 });
@@ -639,13 +889,15 @@ function stampAt(x, y, pressure) {
   const preset = BrushRegistry.get(type);
   const size = pressureSize(type, state.size, pressure);
   const alpha = pressureAlpha(type, state.opacity, pressure);
+  // 落笔前先为将被覆盖的瓦片保存 before 像素（增量撤销）
+  if (state.journal) state.journal.captureBefore(x, y, size / 2 + 2);
   drawDab(activeCtx(), type, state.color, x, y, size, alpha, preset.jitter || 0);
 }
 
 function beginStroke(e) {
   const l = layers.active;
   if (!l || !l.visible) return false; // 隐藏图层不画
-  history.pushPaint();
+  state.journal = history.beginStroke(l.id);
   const p = engine.screenToWorld(e.offsetX, e.offsetY);
   const pressure = getPressure(e);
   state.last = { ...p, pressure };
@@ -731,6 +983,11 @@ function endPointer() {
     state.drawing = false;
     state.last = null;
     state.smoothPoint = null;
+    if (state.journal) {
+      const toolName = state.tool === 'eraser' ? '橡皮擦' : (BrushRegistry.get(state.brush)?.name || '画笔');
+      history.commitStroke(state.journal, `${toolName} ${state.size}px`);
+      state.journal = null;
+    }
     refreshThumbs();
     updateStatus();
   }
@@ -775,7 +1032,12 @@ window.addEventListener('keydown', (e) => {
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') {
     e.preventDefault();
-    document.getElementById('file-open').click();
+    openProjectDialog();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    saveProject({ saveAs: e.shiftKey });
     return;
   }
   if (e.key === '[') { sizeInput.value = Math.max(1, +sizeInput.value - 4); sizeInput.dispatchEvent(new Event('input')); }
@@ -800,5 +1062,19 @@ engine.resize();
 engine.fit();
 refreshOptionsBarTool();
 updateStatus();
+refreshHistoryPanel();
+scheduleAutosave();
+checkRecovery();
+setAutosaveStatus('未修改');
 // 启动先进首页（显示最近文件 / 新建 / 预设）；?nohome=1 可跳过（用于截图/调试）
 if (!/[?&]nohome=1/.test(location.search)) homeApi.show();
+
+/* ---------------- 调试/自动化钩子（不影响正常使用） ---------------- */
+window.__lbsh = {
+  engine, layers, history,
+  doAutosave,
+  saveProject,
+  openProjectFromBytes,
+  get dirty() { return dirty; },
+  get projectName() { return currentProjectName; },
+};
