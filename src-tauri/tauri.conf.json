@@ -31,6 +31,7 @@
     "shortDescription": "落笔生花 - 专业绘画软件",
     "longDescription": "落笔生花 Luobishenghua：对标 CSP 的专业绘画软件，支持 PSD 分层读写与 PS 笔刷导入。",
     "icon": [
+      "icons/icon.ico",
       "icons/icon.icns"
     ],
     "macOS": {

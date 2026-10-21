@@ -2,6 +2,15 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta3（2026-10-21）
+
+自动化打包（CI）与双端发布。
+
+- GitHub Actions 工作流 `.github/workflows/build.yml`：推送 `main` 自动并行构建 macOS `.app` 与 Windows NSIS `.exe` 安装包并上传产物
+- 推送 `v*` 标签（如 `v1.0.0`）自动创建 GitHub Release 并附上两个平台安装包
+- `tauri.conf.json` 图标列表补充 `icon.ico`（Windows 打包必需；此前仅有 `icon.icns`）
+- 构建策略：Rust 依赖缓存（swatinem/rust-cache），npm 依赖锁文件安装（`npm ci`）
+
 ## beta2（2026-10-21）
 
 macOS 桌面版打包（M5）。
