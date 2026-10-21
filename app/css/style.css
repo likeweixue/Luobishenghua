@@ -634,3 +634,28 @@ button.active { background: var(--accent); border-color: var(--accent); color: #
 .recovery .rec-text b { font-weight: 600; }
 .recovery .rec-time { color: var(--text-dim); margin-left: 6px; }
 .recovery button { padding: 4px 12px; }
+
+/* ---------- 图层树 ---------- */
+.layer-row.row-group { background: rgba(255, 255, 255, 0.035); }
+.layer-row .larrow {
+  width: 12px; flex-shrink: 0;
+  text-align: center;
+  font-size: 9px;
+  color: #9a9aa0;
+  cursor: pointer;
+}
+.layer-row .licon { font-size: 10px; flex-shrink: 0; }
+.layer-row canvas.mthumb {
+  width: 22px; height: 18px;
+  border: 1px solid #454548;
+  border-radius: 3px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.layer-row canvas.mthumb.editing {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 1px;
+}
+.layer-row .ltags { display: flex; gap: 3px; flex-shrink: 0; }
+.layer-row .ltag { font-size: 9px; color: #8f8f98; }
+.layer-row .ltag.clip { color: #7fb4e8; }

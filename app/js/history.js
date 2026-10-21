@@ -11,12 +11,20 @@ function tileKey(tx, ty) { return tx + ',' + ty; }
 function parseKey(k) { const i = k.indexOf(','); return [ +k.slice(0, i), +k.slice(i + 1) ]; }
 
 export class StrokeJournal {
-  constructor(layers, layerId) {
+  constructor(layers, layerId, target = 'layer') {
     this.layers = layers;
     this.layerId = layerId;
+    this.target = target;   // 'layer' | 'mask'
     this.before = new Map();  // key -> ImageData
     this.after = new Map();
     this.bytes = 0;
+  }
+
+  _ctx() {
+    const l = this.layers.byId(this.layerId);
+    if (!l) return null;
+    if (this.target === 'mask') return l.mask ? l.mask.ctx : null;
+    return l.ctx;
   }
 
   _keysFor(x, y, r) {
@@ -42,12 +50,12 @@ export class StrokeJournal {
 
   // 在画这一笔之前调用：只复制首次碰到的瓦片
   captureBefore(x, y, radius) {
-    const l = this.layers.byId(this.layerId);
-    if (!l) return;
+    const ctx = this._ctx();
+    if (!ctx) return;
     for (const k of this._keysFor(x, y, radius)) {
       if (this.before.has(k)) continue;
       const [sx, sy, sw, sh] = this._rect(k);
-      const img = l.ctx.getImageData(sx, sy, sw, sh);
+      const img = ctx.getImageData(sx, sy, sw, sh);
       this.before.set(k, img);
       this.bytes += img.data.byteLength;
     }
@@ -55,15 +63,18 @@ export class StrokeJournal {
 
   // 抬笔时调用：补齐 after 像素，返回可入栈的历史条目
   commit() {
-    const l = this.layers.byId(this.layerId);
-    if (!l || this.before.size === 0) return null;
+    const ctx = this._ctx();
+    if (!ctx || this.before.size === 0) return null;
     for (const k of this.before.keys()) {
       const [sx, sy, sw, sh] = this._rect(k);
-      const img = l.ctx.getImageData(sx, sy, sw, sh);
+      const img = ctx.getImageData(sx, sy, sw, sh);
       this.after.set(k, img);
       this.bytes += img.data.byteLength;
     }
-    return { kind: 'tiles', layerId: this.layerId, before: this.before, after: this.after, bytes: this.bytes };
+    return {
+      kind: 'tiles', layerId: this.layerId, target: this.target,
+      before: this.before, after: this.after, bytes: this.bytes,
+    };
   }
 }
 
@@ -97,8 +108,8 @@ export class History {
 
   /* ---------- 记录 ---------- */
 
-  beginStroke(layerId) {
-    return new StrokeJournal(this.layers, layerId);
+  beginStroke(layerId, target = 'layer') {
+    return new StrokeJournal(this.layers, layerId, target);
   }
 
   commitStroke(journal, label = '绘制') {
@@ -168,15 +179,17 @@ export class History {
   _applyTiles(entry, which) {
     const l = this.layers.byId(entry.layerId);
     if (!l) return;
+    const ctx = entry.target === 'mask' ? (l.mask && l.mask.ctx) : l.ctx;
+    if (!ctx) return;
     const map = which === 'before' ? entry.before : entry.after;
-    l.ctx.save();
-    l.ctx.globalCompositeOperation = 'source-over';
-    l.ctx.globalAlpha = 1;
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
     for (const [k, img] of map) {
       const [sx, sy] = this._rectOf(k, img.width, img.height);
-      l.ctx.putImageData(img, sx, sy);
+      ctx.putImageData(img, sx, sy);
     }
-    l.ctx.restore();
+    ctx.restore();
   }
 
   _rectOf(key, w, h) {

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>N2 TEST</title></head>
+<body>
+<pre id="out">running…</pre>
+<script type="module">
+import { LayerStack } from './app/js/layers.js';
+import { History } from './app/js/history.js';
+import { serializeProject, deserializeProject } from './app/js/project.js';
+import { writePSD, readPSD } from './app/js/psd.js';
+
+const out = [];
+let pass = 0, fail = 0;
+const check = (cond, label, extra = '') => {
+  if (cond) { pass++; out.push('✅ ' + label); }
+  else { fail++; out.push('❌ ' + label + (extra ? ' — ' + extra : '')); }
+};
+
+function px(ctxOrLayer, x, y) {
+  const ctx = ctxOrLayer.ctx || ctxOrLayer.getContext?.('2d') || ctxOrLayer;
+  const d = ctx.getImageData(x, y, 1, 1).data;
+  return [d[0], d[1], d[2], d[3]];
+}
+
+function compPx(stack, x, y) {
+  const c = document.createElement('canvas');
+  c.width = stack.w; c.height = stack.h;
+  const ctx = c.getContext('2d');
+  stack.composite(ctx, { checkerboard: false });
+  return px(ctx, x, y);
+}
+
+const isRed = p => p[0] > 180 && p[1] < 110 && p[2] < 110;
+const isGreen = p => p[1] > 120 && p[0] < 110 && p[2] < 130;
+const isBlue = p => p[2] > 150 && p[0] < 110;
+const isWhite = p => p[0] > 240 && p[1] > 240 && p[2] > 240;
+
+async function run() {
+  /* ================= 1. 剪贴蒙版 ================= */
+  const s = new LayerStack(200, 150);
+  const base = s.active;
+  base.name = '底色';
+  base.ctx.fillStyle = '#e24b4a';
+  base.ctx.fillRect(10, 10, 40, 40);
+
+  const clip = s.addLayer();
+  clip.name = '剪贴层';
+  clip.ctx.fillStyle = '#1d9e75';
+  clip.ctx.fillRect(0, 0, 200, 150);
+  s.toggleClipping(clip.id);
+
+  let p = compPx(s, 25, 25);
+  check(isGreen(p), '剪贴层只在基底范围内显示', p + '');
+  p = compPx(s, 100, 100);
+  check(isWhite(p), '基底之外不显示剪贴层', p + '');
+
+  /* ================= 2. 图层蒙版 ================= */
+  s.setActive(base.id);
+  s.addMask(base.id);
+  const mctx = base.mask.ctx;
+  mctx.globalCompositeOperation = 'destination-out';
+  mctx.beginPath();
+  mctx.arc(25, 25, 8, 0, Math.PI * 2);
+  mctx.fill();
+  mctx.globalCompositeOperation = 'source-over';
+
+  p = compPx(s, 25, 25);
+  check(isWhite(p) || p[3] === 0, '蒙版挖洞处被隐藏（剪贴层也随之隐藏）', p + '');
+  p = compPx(s, 15, 15);
+  check(isGreen(p), '蒙版未遮挡处：剪贴层覆盖基底（符合 PS 行为）', p + '');
+  check(isRed(px(base, 15, 15)), '基底图层自身像素仍是红色', px(base, 15, 15) + '');
+
+  // 停用蒙版 → 挖洞处恢复
+  s.toggleMaskEnabled(base.id);
+  p = compPx(s, 25, 25);
+  check(!isWhite(p), '停用蒙版后挖洞处恢复显示', p + '');
+  s.toggleMaskEnabled(base.id);
+
+  /* ================= 3. 图层组 ================= */
+  // 组的插入位置跟随激活层：先选中剪贴层，保证组落在最上层，
+  // 否则剪贴层会压到组上、变成「剪贴到组」
+  s.setActive(clip.id);
+  const g = s.addGroup();
+  g.name = '组 A';
+  const inner = s.addLayer();
+  inner.name = '组内层';
+  inner.ctx.fillStyle = '#378add';
+  inner.ctx.fillRect(120, 20, 30, 30);
+
+  check(s.flatTopFirst().some(it => it.node === g && it.depth === 0), '组在根层（depth 0）');
+  check(s.flatTopFirst().some(it => it.node === inner && it.depth === 1), '组内图层缩进 depth 1');
+  p = compPx(s, 130, 30);
+  check(isBlue(p), '组内图层正常合成', p + '');
+
+  s.setVisible(g.id, false);
+  p = compPx(s, 130, 30);
+  check(isWhite(p), '隐藏组 → 组内内容一起隐藏', p + '');
+  s.setVisible(g.id, true);
+
+  /* ================= 4. 工程 v2 往返 ================= */
+  const flatBefore = compPx(s, 25, 25);
+  const { bytes, manifest } = await serializeProject(s, { doc: null });
+  check(manifest.version === 2, '工程版本 2');
+  check(manifest.nodes.length === 4, '工程记录根节点 4 个（纸张/底色/剪贴/组）', manifest.nodes.length + '');
+  const groupDef = manifest.nodes.find(n => n.type === 'group');
+  check(!!groupDef && groupDef.children.length === 1, '工程里组含 1 个子层');
+  const maskDef = manifest.nodes.find(n => n.mask);
+  check(!!maskDef, '工程里记录了蒙版');
+  check(manifest.nodes.some(n => n.clipping), '工程里记录了剪贴标记');
+
+  const proj = await deserializeProject(bytes);
+  check(proj.nodes.length === 4, '反序列化根节点 4 个');
+  const backGroup = proj.nodes.find(n => n.type === 'group');
+  check(!!backGroup && backGroup.children.length === 1, '反序列化组结构正确');
+  const backMask = proj.nodes.find(n => n.maskCanvas);
+  check(!!backMask, '反序列化蒙版画布存在');
+
+  // 导入新栈，比对像素
+  const s2 = new LayerStack(200, 150);
+  s2.reset(200, 150);
+  s2.layers = s2.importNodes(proj.nodes);
+  s2.activeId = s2.leaves().slice(-1)[0].id;
+  const flatAfter = compPx(s2, 25, 25);
+  check(flatBefore.join(',') === flatAfter.join(','), '工程往返后合成像素一致', flatBefore + ' vs ' + flatAfter);
+  check(isGreen(compPx(s2, 15, 15)), '往返后剪贴效果仍在');
+
+  /* ================= 5. 向下合并 ================= */
+  const ms = new LayerStack(50, 50);
+  const mPaper = ms.layers[0];
+  const bottom = ms.active;
+  bottom.name = '底';
+  bottom.ctx.fillStyle = '#e24b4a';
+  bottom.ctx.fillRect(0, 0, 50, 50);
+  const top = ms.addLayer();
+  top.name = '上';
+  top.ctx.fillStyle = '#378add';
+  top.ctx.fillRect(0, 0, 25, 50);
+  const okMerge = ms.mergeDown(top.id);
+  check(okMerge === true, '向下合并成功');
+  check(ms.layers.length === 2, '合并后只剩纸张 + 1 层', ms.layers.length + '');
+  const mp = px(ms.layers[1], 10, 10), mp2 = px(ms.layers[1], 40, 10);
+  check(isBlue(mp), '合并后上层颜色保留（左半）', mp + '');
+  check(isRed(mp2), '合并后下层颜色保留（右半）', mp2 + '');
+
+  /* ================= 6. PSD 往返（组/蒙版/剪贴） ================= */
+  const ps = new LayerStack(64, 64);
+  ps.layers[0].name = '纸张';
+  const a = ps.active;
+  a.name = '底色';
+  a.ctx.fillStyle = '#e24b4a';
+  a.ctx.fillRect(5, 5, 30, 30);
+  ps.addMask(a.id);
+  a.mask.ctx.globalCompositeOperation = 'destination-out';
+  a.mask.ctx.fillRect(20, 0, 44, 64);
+  a.mask.ctx.globalCompositeOperation = 'source-over';
+
+  const b = ps.addLayer();
+  b.name = '剪贴层';
+  b.ctx.fillStyle = '#378add';
+  b.ctx.fillRect(0, 0, 64, 64);
+  ps.toggleClipping(b.id);
+
+  const pg = ps.addGroup();
+  pg.name = '组 A';
+  const pc = ps.addLayer();
+  pc.name = '组内层';
+  pc.ctx.fillStyle = '#1d9e75';
+  pc.ctx.fillRect(40, 40, 20, 20);
+
+  const flat = document.createElement('canvas');
+  flat.width = 64; flat.height = 64;
+  ps.composite(flat.getContext('2d'), { checkerboard: false });
+
+  const psdBytes = writePSD({
+    width: 64, height: 64,
+    nodes: ps.layers,
+    compositeImage: flat.getContext('2d').getImageData(0, 0, 64, 64),
+  });
+  check(psdBytes.length > 100, 'PSD 写出字节数 ' + psdBytes.length);
+
+  const buf = psdBytes.buffer.slice(psdBytes.byteOffset, psdBytes.byteOffset + psdBytes.byteLength);
+  const parsed = readPSD(buf);
+  check(parsed.width === 64 && parsed.height === 64, 'PSD 尺寸正确');
+  check(parsed.nodes.length === 4, 'PSD 根节点 4 个（纸张/底色/剪贴/组）', parsed.nodes.length + '');
+
+  const pGroup = parsed.nodes.find(n => n.type === 'group');
+  check(!!pGroup, 'PSD 读到组');
+  check(pGroup && pGroup.children.length === 1, 'PSD 组内 1 个子层', pGroup ? pGroup.children.length + '' : '');
+  check(pGroup && pGroup.children[0].name === '组内层', 'PSD 组内层名称正确');
+
+  const pMasked = parsed.nodes.find(n => n.maskCanvas);
+  check(!!pMasked, 'PSD 读到蒙版');
+  check(pMasked && pMasked.maskCanvas.getContext('2d').getImageData(30, 10, 1, 1).data[3] === 0,
+        'PSD 蒙版像素正确（右侧被遮）');
+
+  const pClipped = parsed.nodes.find(n => n.clipping);
+  check(!!pClipped, 'PSD 读到剪贴标记');
+
+  const aBack = parsed.nodes.find(n => n.name === '底色');
+  check(!!aBack && isRed(px(aBack.canvas, 10, 10)), 'PSD 图层像素正确');
+
+  const text = out.join('\n');
+  document.getElementById('out').textContent = text + `\n\n结果：${pass} 通过 / ${fail} 失败`;
+  document.title = fail ? 'FAIL ' + fail : 'PASS ' + pass;
+}
+
+run().catch(err => {
+  document.getElementById('out').textContent = '异常：' + (err.stack || err);
+  document.title = 'ERROR';
+});
+</script>
+</body>
+</html>

@@ -60,10 +60,24 @@ export function initMenuBar(actions) {
       label: '图层',
       items: [
         { label: '新建图层', action: 'layerNew' },
-        { label: '删除图层', action: 'layerDelete' },
+        { label: '新建组', action: 'layerGroup' },
+        { label: '删除', action: 'layerDelete' },
         { sep: true },
         { label: '上移一层', action: 'layerUp' },
         { label: '下移一层', action: 'layerDown' },
+        { label: '移入上方组', action: 'layerMoveIn' },
+        { label: '移出组', action: 'layerMoveOut' },
+        { sep: true },
+        { label: '添加 / 启用蒙版', action: 'layerMask' },
+        { label: '反相蒙版', action: 'layerMaskInvert' },
+        { label: '删除蒙版', action: 'layerMaskDelete' },
+        { label: '剪贴蒙版', action: 'layerClip' },
+        { sep: true },
+        { label: '锁定透明像素', action: 'layerLockAlpha' },
+        { label: '向下合并', action: 'layerMerge' },
+        { label: '合并可见', action: 'layerMergeVisible' },
+        { label: '盖印图层', action: 'layerStamp' },
+        { label: '拼合图像', action: 'layerFlatten' },
         { sep: true },
         { label: '清空当前图层', action: 'clearLayer' },
       ],
@@ -176,9 +190,9 @@ export function aboutDialog() {
   showModal('关于落笔生花', `
     <div class="about">
       <div class="about-name">落笔生花</div>
-      <div class="about-en">Luobishenghua · beta5</div>
+      <div class="about-en">Luobishenghua · beta6</div>
       <p>一款正在生长的绘画软件。</p>
-      <p>压感笔刷引擎 · 多层混合 · PSD 分层互通 · .abr 笔刷生态<br>原生工程 .lbsh · 增量撤销 · 自动保存与崩溃恢复<br>全部为手写零依赖实现</p>
+      <p>压感笔刷引擎 · 图层组 / 蒙版 / 剪贴蒙版 · PSD 分层互通 · .abr 笔刷生态<br>原生工程 .lbsh · 增量撤销 · 自动保存与崩溃恢复<br>全部为手写零依赖实现</p>
       <p class="about-credit">开发：WorkBuddy × likeweixue</p>
     </div>`);
 }

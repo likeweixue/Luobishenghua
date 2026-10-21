@@ -117,13 +117,20 @@
             <span id="layer-opacity-val">100</span>
           </div>
           <div class="layer-controls btns">
-            <button id="btn-layer-add" title="新建图层">＋ 新建</button>
-            <button id="btn-layer-del" title="删除图层">删除</button>
+            <button id="btn-layer-add" title="新建图层">＋图层</button>
+            <button id="btn-layer-group" title="新建组">＋组</button>
+            <button id="btn-layer-del" title="删除">删除</button>
             <button id="btn-layer-up" title="上移一层">↑</button>
             <button id="btn-layer-down" title="下移一层">↓</button>
           </div>
+          <div class="layer-controls btns">
+            <button id="btn-layer-mask" title="添加 / 启用蒙版">蒙版</button>
+            <button id="btn-layer-clip" title="剪贴蒙版（以下一层为基底）">剪贴</button>
+            <button id="btn-layer-merge" title="向下合并">合并</button>
+            <button id="btn-layer-lockalpha" title="锁定透明像素">锁α</button>
+          </div>
           <div id="layer-list"></div>
-          <div class="panel-hint">双击图层名可重命名</div>
+          <div class="panel-hint">点蒙版缩略图可编辑蒙版 · 双击名称重命名</div>
         </div>
       </section>
 
@@ -206,7 +213,7 @@
     </div>
 
     <div class="home-foot">
-      <span>落笔生花 Luobishenghua · beta5</span>
+      <span>落笔生花 Luobishenghua · beta6</span>
       <span>WorkBuddy × likeweixue</span>
     </div>
   </div>

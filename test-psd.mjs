@@ -2,41 +2,54 @@
 global.ImageData = class {
   constructor(w, h) { this.width = w; this.height = h; this.data = new Uint8ClampedArray(w * h * 4); }
 };
-global.document = {
-  createElement: () => ({
-    width: 0, height: 0, _img: null,
-    getContext: () => function () {},
-  }),
-};
-// readPSD 里用 canvas.getContext('2d').putImageData，换成对象桩
-global.document.createElement = () => {
+
+// 最小 canvas 桩：支持 putImageData / getImageData / 其余空实现
+function makeStubCanvas() {
   const c = {
-    width: 0, height: 0, img: null,
-    getContext: () => ({ putImageData: (img) => { c.img = img; }, drawImage: () => {} }),
+    width: 0, height: 0, _img: null,
+    getContext: () => ({
+      putImageData(img) { c._img = img; },
+      getImageData(x, y, w, h) { return c._img || new ImageData(w, h); },
+      drawImage() {}, clearRect() {}, fillRect() {}, save() {}, restore() {},
+      set fillStyle(v) {}, get fillStyle() { return '#000'; },
+      set globalAlpha(v) {}, set globalCompositeOperation(v) {},
+      set transform(v) {},
+    }),
   };
   return c;
-};
+}
+global.document = { createElement: () => makeStubCanvas() };
 
-const { readPSD, writePSD } = await import('./js/psd.js');
+const { readPSD, writePSD } = await import('./app/js/psd.js');
 
-const W = 37, H = 23; // 故意用非整数倍尺寸测 RLE 边界
+const W = 37, H = 23; // 非整数倍尺寸测 RLE 边界
 function makeLayer(seed) {
   const img = new ImageData(W, H);
   for (let i = 0; i < W * H; i++) {
     img.data[i * 4] = (i * 7 + seed) % 256;
     img.data[i * 4 + 1] = (i * 3 + seed * 2) % 256;
     img.data[i * 4 + 2] = (i * 11 + seed * 5) % 256;
-    img.data[i * 4 + 3] = (i % 5 === 0) ? 0 : 200 + (i + seed) % 56; // 含全透明点
+    img.data[i * 4 + 3] = (i % 5 === 0) ? 0 : 200 + (i + seed) % 56;
   }
   return img;
 }
+
+function canvasOf(img) {
+  const c = makeStubCanvas();
+  c.width = img.width;
+  c.height = img.height;
+  c.getContext().putImageData(img);
+  return c;
+}
+
 const composite = makeLayer(99);
 
+// 节点树：底层在前（与内部约定一致）
 const bytes = writePSD({
   width: W, height: H,
-  layers: [
-    { name: '顶层 Lines', visible: true, opacity: 1, blend: 'multiply', imageData: makeLayer(1) },
-    { name: '底色 中文名', visible: false, opacity: 0.5, blend: 'source-over', imageData: makeLayer(2) },
+  nodes: [
+    { type: 'layer', name: '底色 中文名', visible: false, opacity: 0.5, blend: 'source-over', canvas: canvasOf(makeLayer(2)) },
+    { type: 'layer', name: '顶层 Lines', visible: true, opacity: 1, blend: 'multiply', canvas: canvasOf(makeLayer(1)) },
   ],
   compositeImage: composite,
 });
@@ -50,15 +63,16 @@ function assert(cond, msg) { if (!cond) { ok = false; console.error('✗', msg);
 
 assert(parsed.width === W && parsed.height === H, '尺寸一致');
 assert(parsed.layers.length === 2, '图层数一致');
-assert(parsed.layers[0].name === '顶层 Lines', '顶层名称(ASCII)一致: ' + parsed.layers[0].name);
-assert(parsed.layers[1].name === '底色 中文名', '中文图层名(luni)一致: ' + parsed.layers[1].name);
-assert(parsed.layers[1].visible === false, '隐藏标记一致');
-assert(Math.abs(parsed.layers[1].opacity - 0.5) < 0.01, '不透明度一致: ' + parsed.layers[1].opacity);
-assert(parsed.layers[0].blend === 'multiply', '混合模式一致: ' + parsed.layers[0].blend);
+const bottom = parsed.layers[0], top = parsed.layers[1];
+assert(bottom.name === '底色 中文名', '中文图层名(luni)一致: ' + bottom.name);
+assert(top.name === '顶层 Lines', '顶层名称(ASCII)一致: ' + top.name);
+assert(bottom.visible === false, '隐藏标记一致');
+assert(Math.abs(bottom.opacity - 0.5) < 0.01, '不透明度一致: ' + bottom.opacity);
+assert(top.blend === 'multiply', '混合模式一致: ' + top.blend);
 
-// 像素校验（顶层 = 文件第一个图层，seed=1）
+// 像素校验（顶层 seed=1）
 const src = makeLayer(1).data;
-const got = parsed.layers[0].canvas.img.data;
+const got = top.canvas._img.data;
 let diff = 0;
 for (let i = 0; i < src.length; i++) if (src[i] !== got[i]) diff++;
 assert(diff === 0, `像素完全一致（差异字节 ${diff}）`);

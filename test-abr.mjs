@@ -1,5 +1,5 @@
 // ABR 解析自检：手工构造 v2 与 v6 格式文件 → 解析验证
-const { readABR } = await import('./js/abr.js');
+const { readABR } = await import('./app/js/abr.js');
 
 function utf16be(s) {
   const a = new Uint8Array(s.length * 2 + 2);

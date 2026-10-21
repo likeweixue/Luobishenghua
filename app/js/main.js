@@ -1,7 +1,7 @@
 // 主程序：面板系统 + 图层系统 + 笔画管线（压感采样 → 印章铺排）
 import { Engine } from './engine.js';
 import { History } from './history.js';
-import { BrushPresets, BrushRegistry, registerCustomBrush, brushThumbnail, pressureSize, pressureAlpha, drawDab } from './brushes.js';
+import { BrushPresets, BrushRegistry, registerCustomBrush, brushThumbnail, pressureSize, pressureAlpha, drawDab, getStamp } from './brushes.js';
 import { readABR } from './abr.js';
 import { initMenuBar, aboutDialog, shortcutsDialog, settingsDialog, newDocDialog } from './menu.js';
 import { createHome, addRecent, toast } from './home.js';
@@ -225,13 +225,59 @@ const layerListEl = document.getElementById('layer-list');
 const blendSelect = document.getElementById('layer-blend');
 const layerOpacityInput = document.getElementById('layer-opacity');
 
+// 是否处于「编辑蒙版」状态：画笔作用到蒙版而不是图层像素
+state.editMask = false;
+
+function luminance(hex) {
+  const m = hex.replace('#', '');
+  const v = m.length === 3 ? m.split('').map(c => c + c).join('') : m;
+  const r = parseInt(v.slice(0, 2), 16) / 255;
+  const g = parseInt(v.slice(2, 4), 16) / 255;
+  const b = parseInt(v.slice(4, 6), 16) / 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function makeNameEl(l) {
+  const name = document.createElement('span');
+  name.className = 'lname' + (l.locked ? ' locked' : '');
+  name.textContent = l.name;
+  name.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    const n = prompt('图层名称', l.name);
+    if (n && n.trim()) {
+      history.pushFull('重命名图层');
+      layers.rename(l.id, n);
+    }
+  });
+  return name;
+}
+
+function makeMaskThumb(l) {
+  const mthumb = document.createElement('canvas');
+  mthumb.className = 'mthumb' + (state.editMask && l.id === layers.activeId ? ' editing' : '');
+  mthumb.width = 22;
+  mthumb.height = 18;
+  mthumb.dataset.maskId = l.id;
+  mthumb.title = '点击编辑蒙版';
+  mthumb.addEventListener('click', (e) => {
+    e.stopPropagation();
+    layers.setActive(l.id);
+    state.editMask = true;
+    renderLayerPanel();
+    updateStatus();
+  });
+  return mthumb;
+}
+
 function renderLayerPanel() {
   layerListEl.innerHTML = '';
-  // 面板中顶层在上：倒序渲染
-  for (let i = layers.layers.length - 1; i >= 0; i--) {
-    const l = layers.layers[i];
+
+  for (const { node: l, depth } of layers.flatTopFirst()) {
     const row = document.createElement('div');
-    row.className = 'layer-row' + (l.id === layers.activeId ? ' active' : '');
+    row.className = 'layer-row'
+      + (l.id === layers.activeId ? ' active' : '')
+      + (l.type === 'group' ? ' row-group' : '');
+    row.style.paddingLeft = (3 + depth * 12) + 'px';
 
     const eye = document.createElement('span');
     eye.className = 'eye' + (l.visible ? '' : ' off');
@@ -239,47 +285,65 @@ function renderLayerPanel() {
     eye.title = '显示/隐藏';
     eye.addEventListener('click', (e) => {
       e.stopPropagation();
-      history.pushFull('显示/隐藏图层');
+      history.pushFull(l.visible ? '隐藏' : '显示');
       layers.setVisible(l.id, !l.visible);
       engine.render();
       updateStatus();
     });
+    row.appendChild(eye);
 
-    const thumb = document.createElement('canvas');
-    thumb.className = 'thumb';
-    thumb.width = 30;
-    thumb.height = 24;
-    thumb.dataset.layerId = l.id;
+    if (l.type === 'group') {
+      const arrow = document.createElement('span');
+      arrow.className = 'larrow';
+      arrow.textContent = l.expanded ? '▾' : '▸';
+      arrow.title = '展开/折叠';
+      arrow.addEventListener('click', (e) => {
+        e.stopPropagation();
+        history.pushFull('展开/折叠组');
+        layers.toggleExpanded(l.id);
+      });
+      const icon = document.createElement('span');
+      icon.className = 'licon';
+      icon.textContent = '📁';
+      row.append(arrow, icon);
+      if (l.mask) row.appendChild(makeMaskThumb(l));
+      row.appendChild(makeNameEl(l));
+    } else {
+      const thumb = document.createElement('canvas');
+      thumb.className = 'thumb';
+      thumb.width = 30;
+      thumb.height = 24;
+      thumb.dataset.layerId = l.id;
+      row.appendChild(thumb);
 
-    const name = document.createElement('span');
-    name.className = 'lname' + (l.locked ? ' locked' : '');
-    name.textContent = l.name + (l.locked ? ' 🔒' : '');
-    name.addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      if (l.locked) return;
-      const n = prompt('图层名称', l.name);
-      if (n && n.trim()) {
-        history.pushFull('重命名图层');
-        layers.rename(l.id, n);
-      }
-    });
+      if (l.mask) row.appendChild(makeMaskThumb(l));
+      row.appendChild(makeNameEl(l));
 
-    row.append(eye, thumb, name);
+      const tags = document.createElement('span');
+      tags.className = 'ltags';
+      if (l.clipping) tags.insertAdjacentHTML('beforeend', '<span class="ltag clip" title="剪贴蒙版">↳</span>');
+      if (l.lockAlpha) tags.insertAdjacentHTML('beforeend', '<span class="ltag lock" title="锁定透明像素">α</span>');
+      if (l.locked) tags.insertAdjacentHTML('beforeend', '<span class="ltag lock" title="锁定">🔒</span>');
+      row.appendChild(tags);
+    }
+
     row.addEventListener('click', () => {
       layers.setActive(l.id);
+      state.editMask = false;
       updateStatus();
     });
     layerListEl.appendChild(row);
   }
+
   refreshThumbs();
   syncLayerControls();
   dock.reflowBoth();
 }
 
 function refreshThumbs() {
-  for (const thumb of layerListEl.querySelectorAll('canvas.thumb')) {
+  for (const thumb of layerListEl.querySelectorAll('canvas.thumb[data-layer-id]')) {
     const l = layers.byId(+thumb.dataset.layerId);
-    if (!l) continue;
+    if (!l || !l.canvas) continue;
     const tc = thumb.getContext('2d');
     tc.clearRect(0, 0, 30, 24);
     tc.save();
@@ -287,20 +351,61 @@ function refreshThumbs() {
     tc.drawImage(l.canvas, 0, 0);
     tc.restore();
   }
+  for (const mthumb of layerListEl.querySelectorAll('canvas.mthumb[data-mask-id]')) {
+    const l = layers.byId(+mthumb.dataset.maskId);
+    if (!l || !l.mask) continue;
+    const tc = mthumb.getContext('2d');
+    tc.fillStyle = '#111111';
+    tc.fillRect(0, 0, 22, 18);
+    tc.save();
+    tc.scale(22 / layers.w, 18 / layers.h);
+    tc.drawImage(l.mask.canvas, 0, 0);
+    tc.restore();
+    if (!l.mask.enabled) {
+      tc.strokeStyle = '#e24b4a';
+      tc.lineWidth = 2;
+      tc.beginPath();
+      tc.moveTo(1, 1); tc.lineTo(21, 17);
+      tc.moveTo(21, 1); tc.lineTo(1, 17);
+      tc.stroke();
+    }
+  }
 }
 
 function syncLayerControls() {
-  const l = layers.active;
-  if (!l) return;
-  blendSelect.value = l.blend;
-  layerOpacityInput.value = Math.round(l.opacity * 100);
-  document.getElementById('layer-opacity-val').textContent = Math.round(l.opacity * 100);
-  const locked = l.locked;
+  const n = layers.active;
+  if (!n) return;
+  blendSelect.value = n.blend;
+  layerOpacityInput.value = Math.round(n.opacity * 100);
+  document.getElementById('layer-opacity-val').textContent = Math.round(n.opacity * 100);
+
+  const locked = n.locked;
+  const isGroup = n.type === 'group';
   blendSelect.disabled = locked;
   layerOpacityInput.disabled = locked;
   document.getElementById('btn-layer-del').disabled = locked;
   document.getElementById('btn-layer-up').disabled = locked;
   document.getElementById('btn-layer-down').disabled = locked;
+  document.getElementById('btn-layer-merge').disabled = locked || isGroup;
+  document.getElementById('btn-layer-lockalpha').disabled = isGroup;
+
+  const mBtn = document.getElementById('btn-layer-mask');
+  mBtn.disabled = locked;
+  mBtn.textContent = !n.mask ? '蒙版' : (n.mask.enabled ? '蒙版✓' : '蒙版✕');
+
+  const cBtn = document.getElementById('btn-layer-clip');
+  cBtn.disabled = isGroup && false;
+  cBtn.classList.toggle('active', !!n.clipping);
+
+  document.getElementById('btn-layer-lockalpha').classList.toggle('active', !!n.lockAlpha);
+}
+
+function layerOp(label, fn) {
+  history.pushFull(label);
+  if (!fn()) history.dropLast();
+  engine.render();
+  refreshThumbs();
+  updateStatus();
 }
 
 document.getElementById('btn-layer-add').addEventListener('click', () => {
@@ -309,31 +414,56 @@ document.getElementById('btn-layer-add').addEventListener('click', () => {
   engine.render();
   updateStatus();
 });
-document.getElementById('btn-layer-del').addEventListener('click', () => {
-  if (!confirm(`删除「${layers.active.name}」？（可用撤销恢复）`)) return;
-  history.pushFull('删除图层');
-  layers.deleteActive();
+
+document.getElementById('btn-layer-group').addEventListener('click', () => {
+  history.pushFull('新建组');
+  layers.addGroup();
   engine.render();
   updateStatus();
 });
+
+document.getElementById('btn-layer-del').addEventListener('click', () => {
+  const n = layers.active;
+  if (!n) return;
+  const what = n.type === 'group' ? `组「${n.name}」及其全部内容` : `「${n.name}」`;
+  if (!confirm(`删除${what}？（可用撤销恢复）`)) return;
+  layerOp('删除图层', () => layers.deleteActive());
+});
+
 document.getElementById('btn-layer-up').addEventListener('click', () => {
-  history.pushFull('上移图层');
-  if (!layers.moveActive(1)) history.dropLast();
-  engine.render();
-  updateStatus();
+  layerOp('上移图层', () => layers.moveActive(1));
 });
 document.getElementById('btn-layer-down').addEventListener('click', () => {
-  history.pushFull('下移图层');
-  if (!layers.moveActive(-1)) history.dropLast();
-  engine.render();
-  updateStatus();
+  layerOp('下移图层', () => layers.moveActive(-1));
 });
+
+document.getElementById('btn-layer-mask').addEventListener('click', () => {
+  const n = layers.active;
+  if (!n) return;
+  if (!n.mask) layerOp('添加蒙版', () => layers.addMask());
+  else layerOp(n.mask.enabled ? '停用蒙版' : '启用蒙版', () => layers.toggleMaskEnabled());
+});
+
+document.getElementById('btn-layer-clip').addEventListener('click', () => {
+  layerOp('剪贴蒙版', () => layers.toggleClipping());
+});
+
+document.getElementById('btn-layer-merge').addEventListener('click', () => {
+  const n = layers.active;
+  if (!n || n.type === 'group') return;
+  layerOp('向下合并', () => layers.mergeDown());
+});
+
+document.getElementById('btn-layer-lockalpha').addEventListener('click', () => {
+  layerOp('锁定透明像素', () => layers.toggleLockAlpha());
+});
+
 blendSelect.addEventListener('change', () => {
   history.pushFull('混合模式');
   layers.setBlend(blendSelect.value);
   engine.render();
 });
-layerOpacityInput.addEventListener('pointerdown', () => history.pushFull('图层不透明度')); // 拖动前记一次历史
+layerOpacityInput.addEventListener('pointerdown', () => history.pushFull('图层不透明度'));
 layerOpacityInput.addEventListener('input', () => {
   layers.setOpacity(+layerOpacityInput.value / 100);
   document.getElementById('layer-opacity-val').textContent = layerOpacityInput.value;
@@ -405,9 +535,10 @@ function setAutosaveStatus(text) {
 
 async function applyProject(project, meta = {}) {
   layers.reset(project.width, project.height);
-  for (const def of project.layers) layers.pushLayer(def);
-  const idx = Math.max(0, Math.min(project.activeIndex || 0, layers.layers.length - 1));
-  layers.activeId = layers.layers[idx].id;
+  layers.layers = layers.importNodes(project.nodes || []);
+  const active = project.activePath ? layers.nodeAtPath(project.activePath) : null;
+  const fallback = layers.leaves().slice(-1)[0];
+  layers.activeId = (active || fallback)?.id || null;
 
   engine.setDocSize(project.width, project.height);
   document.getElementById('status-doc').textContent = `画布 ${project.width} × ${project.height}`;
@@ -571,6 +702,18 @@ document.getElementById('btn-redo').addEventListener('click', () => { history.re
 function clearActiveLayer() {
   const l = layers.active;
   if (!l) return;
+  // 编辑蒙版状态下清空蒙版（恢复全显示）
+  if (state.editMask && l.mask) {
+    if (!confirm('清空蒙版（恢复全部显示）？')) return;
+    history.pushFull('清空蒙版');   // clearMask 写新画布，快照引用旧画布
+    layers.clearMask(l.id);
+    engine.render();
+    refreshThumbs();
+    updateStatus();
+    return;
+  }
+  if (l.type === 'group') { toast('组不能直接清空，请选择组内图层'); return; }
+
   if (!confirm(`清空「${l.name}」的内容？（可用撤销恢复）`)) return;
   const before = history.captureLayer(l.id);
   l.ctx.save();
@@ -626,11 +769,10 @@ document.getElementById('btn-save').addEventListener('click', doExportPNG);
 
 function loadDocumentFromPSD(psd, meta = {}) {
   layers.reset(psd.width, psd.height);
-  if (psd.layers.length > 0) {
-    // PSD 文件中图层是「顶层在前」，内部栈是「底层在前」→ 倒序推入
-    for (let i = psd.layers.length - 1; i >= 0; i--) {
-      layers.pushLayer(psd.layers[i]);
-    }
+  if (psd.nodes && psd.nodes.length > 0) {
+    layers.layers = layers.importNodes(psd.nodes);
+    const last = layers.leaves().slice(-1)[0];
+    layers.activeId = last ? last.id : null;
   } else if (psd.composite) {
     // 无图层信息：用合成图像作为单图层
     const c = document.createElement('canvas');
@@ -638,8 +780,9 @@ function loadDocumentFromPSD(psd, meta = {}) {
     c.height = psd.height;
     c.getContext('2d').putImageData(psd.composite, 0, 0);
     layers.pushLayer({ name: '背景', canvas: c });
+    const last = layers.leaves().slice(-1)[0];
+    layers.activeId = last ? last.id : null;
   }
-  layers.activeId = layers.layers[layers.layers.length - 1].id;
   engine.setDocSize(psd.width, psd.height);
   document.getElementById('status-doc').textContent = `画布 ${psd.width} × ${psd.height}`;
   resetHistory();
@@ -746,18 +889,10 @@ async function doExportPSD() {
     t.height = layers.h;
     const tc = t.getContext('2d');
     layers.composite(tc, { checkerboard: false });
-    // 文件图层顺序：顶层在前
-    const defs = [...layers.layers].reverse().map(l => ({
-      name: l.name,
-      visible: l.visible,
-      opacity: l.opacity,
-      blend: l.blend,
-      imageData: l.ctx.getImageData(0, 0, layers.w, layers.h),
-    }));
     const bytes = writePSD({
       width: layers.w,
       height: layers.h,
-      layers: defs,
+      nodes: layers.layers,
       compositeImage: tc.getImageData(0, 0, layers.w, layers.h),
     });
     await saveBytes(bytes, 'luobishenghua.psd', 'Photoshop 文档', ['psd']);
@@ -846,9 +981,21 @@ initMenuBar({
   redo: () => { history.redo(); refreshThumbs(); updateStatus(); },
   clearLayer: clearActiveLayer,
   layerNew: () => document.getElementById('btn-layer-add').click(),
+  layerGroup: () => document.getElementById('btn-layer-group').click(),
   layerDelete: () => document.getElementById('btn-layer-del').click(),
   layerUp: () => document.getElementById('btn-layer-up').click(),
   layerDown: () => document.getElementById('btn-layer-down').click(),
+  layerMoveIn: () => layerOp('移入组', () => layers.moveActiveIntoNearestGroup()),
+  layerMoveOut: () => layerOp('移出组', () => layers.moveActiveOutOfGroup()),
+  layerMask: () => document.getElementById('btn-layer-mask').click(),
+  layerMaskDelete: () => layerOp('删除蒙版', () => layers.deleteMask()),
+  layerMaskInvert: () => layerOp('反相蒙版', () => layers.invertMask()),
+  layerClip: () => document.getElementById('btn-layer-clip').click(),
+  layerMerge: () => document.getElementById('btn-layer-merge').click(),
+  layerMergeVisible: () => layerOp('合并可见', () => !!layers.mergeVisible()),
+  layerStamp: () => { history.pushFull('盖印图层'); layers.stampVisible(); engine.render(); updateStatus(); },
+  layerFlatten: () => layerOp('拼合图像', () => !!layers.flatten()),
+  layerLockAlpha: () => document.getElementById('btn-layer-lockalpha').click(),
   zoomIn: () => zoomCenter(1.25),
   zoomOut: () => zoomCenter(0.8),
   resetView: () => { engine.fit(); updateStatus(); },
@@ -885,19 +1032,41 @@ function getPressure(e) {
 }
 
 function stampAt(x, y, pressure) {
+  const l = layers.active;
+  if (!l) return;
+  if (l.type !== 'layer' && !(state.editMask && l.mask)) return;
   const type = activeBrushType();
   const preset = BrushRegistry.get(type);
   const size = pressureSize(type, state.size, pressure);
   const alpha = pressureAlpha(type, state.opacity, pressure);
   // 落笔前先为将被覆盖的瓦片保存 before 像素（增量撤销）
   if (state.journal) state.journal.captureBefore(x, y, size / 2 + 2);
-  drawDab(activeCtx(), type, state.color, x, y, size, alpha, preset.jitter || 0);
+
+  // 编辑蒙版：用亮度当蒙版值（白=显示，黑=隐藏）
+  if (state.editMask && l.mask) {
+    const lum = state.tool === 'eraser' ? 0 : luminance(state.color);
+    const stamp = getStamp(type === 'eraser' ? 'hard' : type, '#ffffff');
+    layers.paintMaskDab(l, x, y, size, lum, stamp);
+    return;
+  }
+
+  drawDab(l.ctx, type, state.color, x, y, size, alpha, preset.jitter || 0);
 }
 
 function beginStroke(e) {
   const l = layers.active;
-  if (!l || !l.visible) return false; // 隐藏图层不画
-  state.journal = history.beginStroke(l.id);
+  if (!l || !l.visible) return false;
+  const target = (state.editMask && l.mask) ? 'mask' : 'layer';
+  if (target === 'layer') {
+    if (l.type !== 'layer' || l.locked) return false;        // 组/锁定图层不画
+  }
+  state.journal = history.beginStroke(l.id, target);
+  state.strokeTarget = target;
+  // 锁定透明像素：只在已有像素范围内绘制
+  if (target === 'layer' && l.lockAlpha) {
+    l.ctx.save();
+    l.ctx.globalCompositeOperation = 'source-atop';
+  }
   const p = engine.screenToWorld(e.offsetX, e.offsetY);
   const pressure = getPressure(e);
   state.last = { ...p, pressure };
@@ -983,9 +1152,15 @@ function endPointer() {
     state.drawing = false;
     state.last = null;
     state.smoothPoint = null;
+    const act = layers.active;
+    if (act && act.type === 'layer' && state.strokeTarget === 'layer' && act.lockAlpha) {
+      act.ctx.restore();  // 解除 source-atop
+      act.ctx.globalCompositeOperation = 'source-over';
+    }
     if (state.journal) {
       const toolName = state.tool === 'eraser' ? '橡皮擦' : (BrushRegistry.get(state.brush)?.name || '画笔');
-      history.commitStroke(state.journal, `${toolName} ${state.size}px`);
+      const where = state.strokeTarget === 'mask' ? '蒙版' : toolName;
+      history.commitStroke(state.journal, `${where} ${state.size}px`);
       state.journal = null;
     }
     refreshThumbs();

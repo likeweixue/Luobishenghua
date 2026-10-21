@@ -34,12 +34,12 @@ async function run() {
   const { bytes, manifest } = await serializeProject(layers, { doc: null });
   check(bytes.length > 100, '序列化产出字节数 ' + bytes.length);
   check(manifest.width === 200 && manifest.height === 150, 'manifest 尺寸正确');
-  check(manifest.layers.length === 2, 'manifest 图层数 2（含纸张）');
+  check(manifest.nodes.length === 2, 'manifest 图层数 2（含纸张）');
 
   const proj = await deserializeProject(bytes);
   check(proj.width === 200 && proj.height === 150, '反序列化尺寸正确');
-  check(proj.layers.length === 2, '反序列化图层数 2');
-  const back = proj.layers[1];
+  check(proj.nodes.length === 2, '反序列化图层数 2');
+  const back = proj.nodes[1];
   check(back.name === '线稿层', '图层名保留（中文）');
   check(Math.abs(back.opacity - 0.75) < 0.01, '不透明度保留');
   check(back.blend === 'multiply', '混合模式保留');

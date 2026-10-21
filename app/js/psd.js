@@ -114,6 +114,7 @@ export function readPSD(buffer) {
   r.skip(r.u32()); // 图像资源
 
   const layers = [];
+  let nodes = [];
   const layerMaskLen = r.u32();
   const layerMaskEnd = r.p + layerMaskLen;
 
@@ -132,18 +133,36 @@ export function readPSD(buffer) {
         r.skip(4); // '8BIM'
         const blendKey = r.str(4);
         const opacity = r.u8_() / 255;
-        r.u8_(); // clipping
+        const clipping = r.u8_() === 1;
         const flags = r.u8_();
         r.skip(1);
         const extraLen = r.u32();
         const extraEnd = r.p + extraLen;
-        r.skip(r.u32()); // 蒙版数据
+
+        // 蒙版信息：4 个边界 + 标志 + 默认色（20 字节起）
+        let mask = null;
+        const maskLen = r.u32();
+        if (maskLen >= 18) {
+          const mTop = r.i32(), mLeft = r.i32(), mBottom = r.i32(), mRight = r.i32();
+          const mFlags = r.u8_();
+          r.u8_();
+          if (maskLen > 18) r.skip(maskLen - 18);
+          mask = {
+            top: mTop, left: mLeft, bottom: mBottom, right: mRight,
+            disabled: !!(mFlags & 2),
+          };
+        } else if (maskLen > 0) {
+          r.skip(maskLen);
+        }
         r.skip(r.u32()); // 混合范围
-        // 图层名（Pascal，MacRoman/ASCII）
+
+        // 图层名（Pascal）
         const nameLen = r.u8_();
         let name = new TextDecoder('latin1').decode(r.bytes(nameLen));
         r.skip((4 - ((1 + nameLen) % 4)) % 4);
-        // 附加信息块：找 luni（Unicode 图层名）
+
+        // 附加块：luni（Unicode 名）、lsct（分组标记）
+        let lsct = 0;
         try {
           while (r.p + 12 <= extraEnd) {
             r.skip(4); // '8BIM' / '8B64'
@@ -153,13 +172,15 @@ export function readPSD(buffer) {
             if (key === 'luni') {
               const n = r.u32();
               const raw = r.bytes(n * 2);
-              let s = '';
-              for (let j = 0; j < n; j++) s += String.fromCharCode((raw[j * 2] << 8) | raw[j * 2 + 1]);
-              name = s;
+              let sname = '';
+              for (let j = 0; j < n; j++) sname += String.fromCharCode((raw[j * 2] << 8) | raw[j * 2 + 1]);
+              name = sname;
+            } else if (key === 'lsct') {
+              lsct = r.u32();
             }
             r.p = bstart + blen + (blen % 2 ? 1 : 0);
           }
-        } catch (_) { /* 附加块解析失败就用 Pascal 名 */ }
+        } catch (_) { /* 附加块解析失败忽略 */ }
         r.p = extraEnd;
 
         recs.push({
@@ -167,18 +188,24 @@ export function readPSD(buffer) {
           blend: KEY_TO_BLEND[blendKey] || 'source-over',
           opacity,
           visible: !(flags & 2),
+          clipping,
+          lockAlpha: !!(flags & 1),
           name: name || `图层 ${i + 1}`,
+          mask,
+          lsct,
         });
       }
 
-      // 通道像素数据
+      // 通道像素数据（蒙版通道 -2 用自己的矩形）
       for (const rec of recs) {
-        const w = rec.right - rec.left;
-        const h = rec.bottom - rec.top;
         rec.planes = {};
+        rec.maskPlane = null;
         for (const ch of rec.chans) {
+          const box = (ch.id === -2 && rec.mask) ? rec.mask : rec;
+          const w = Math.max(0, box.right - box.left);
+          const h = Math.max(0, box.bottom - box.top);
           const comp = r.u16();
-          const plane = new Uint8Array(Math.max(0, w * h));
+          const plane = new Uint8Array(w * h);
           if (comp === 0) {
             plane.set(r.bytes(w * h));
           } else if (comp === 1) {
@@ -188,18 +215,27 @@ export function readPSD(buffer) {
           } else {
             throw new Error('未知压缩方式: ' + comp);
           }
-          rec.planes[ch.id] = plane;
+          if (ch.id === -2) {
+            rec.maskPlane = plane;
+            rec.maskW = w;
+            rec.maskH = h;
+          } else {
+            rec.planes[ch.id] = plane;
+          }
         }
       }
 
-      // 合成每个图层的画布
+      // 组装图层画布与蒙版画布
       for (const rec of recs) {
+        const isMarker = rec.lsct === 1 || rec.lsct === 2 || rec.lsct === 3;
+        if (isMarker) { rec.canvas = null; rec.maskCanvas = null; continue; }
+
         const w = rec.right - rec.left;
         const h = rec.bottom - rec.top;
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, w);
-        canvas.height = Math.max(1, h);
         if (w > 0 && h > 0) {
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
           const img = new ImageData(w, h);
           const d = img.data;
           const R = rec.planes[0], G = rec.planes[1], B = rec.planes[2], A = rec.planes[-1];
@@ -210,24 +246,86 @@ export function readPSD(buffer) {
             d[i * 4 + 3] = A ? A[i] : 255;
           }
           canvas.getContext('2d').putImageData(img, 0, 0);
+          rec.canvas = canvas;
         }
-        layers.push({
-          name: rec.name,
-          visible: rec.visible,
-          opacity: rec.opacity,
-          blend: rec.blend,
-          left: rec.left,
-          top: rec.top,
-          canvas,
-        });
+
+        if (rec.maskPlane && rec.mask) {
+          const mw = rec.maskW, mh = rec.maskH;
+          const tmp = document.createElement('canvas');
+          tmp.width = mw;
+          tmp.height = mh;
+          const img = new ImageData(mw, mh);
+          const d = img.data;
+          for (let i = 0; i < mw * mh; i++) {
+            d[i * 4] = 255;
+            d[i * 4 + 1] = 255;
+            d[i * 4 + 2] = 255;
+            d[i * 4 + 3] = rec.maskPlane[i];
+          }
+          tmp.getContext('2d').putImageData(img, 0, 0);
+
+          const mc = document.createElement('canvas');
+          mc.width = width;
+          mc.height = height;
+          mc.getContext('2d').drawImage(tmp, rec.mask.left, rec.mask.top);
+          rec.maskCanvas = mc;
+        }
       }
+
+      // 按 lsct 标记组装图层树（PSD 顺序：底层在前）
+      const rootNodes = [];
+      const stack = [{ children: rootNodes }];
+      for (const rec of recs) {
+        if (rec.lsct === 3) {
+          stack.push({ children: [] });
+        } else if (rec.lsct === 1 || rec.lsct === 2) {
+          if (stack.length > 1) {
+            const frame = stack.pop();
+            stack[stack.length - 1].children.push({
+              type: 'group',
+              name: rec.name,
+              visible: rec.visible,
+              opacity: rec.opacity,
+              blend: rec.blend,
+              locked: false,
+              clipping: rec.clipping,
+              expanded: rec.lsct === 1,
+              children: frame.children,
+              maskCanvas: rec.maskCanvas,
+              maskEnabled: rec.mask ? !rec.mask.disabled : true,
+            });
+          }
+        } else {
+          stack[stack.length - 1].children.push({
+            type: 'layer',
+            name: rec.name,
+            visible: rec.visible,
+            opacity: rec.opacity,
+            blend: rec.blend,
+            locked: false,
+            lockAlpha: rec.lockAlpha,
+            clipping: rec.clipping,
+            canvas: rec.canvas,
+            maskCanvas: rec.maskCanvas,
+            maskEnabled: rec.mask ? !rec.mask.disabled : true,
+          });
+        }
+      }
+      nodes = rootNodes;
+
+      // 兼容旧的扁平输出
+      const walkFlat = (ns) => ns.forEach(n => {
+        if (n.type === 'group') walkFlat(n.children || []);
+        else layers.push({ name: n.name, visible: n.visible, opacity: n.opacity, blend: n.blend, canvas: n.canvas, maskCanvas: n.maskCanvas });
+      });
+      walkFlat(nodes);
     }
   }
   r.p = layerMaskEnd;
 
   // 无图层时读取合成图像作为单图层
   let composite = null;
-  if (layers.length === 0) {
+  if (nodes.length === 0) {
     const comp = r.u16();
     const img = new ImageData(width, height);
     const d = img.data;
@@ -252,7 +350,7 @@ export function readPSD(buffer) {
     composite = img;
   }
 
-  return { width, height, layers, composite };
+  return { width, height, nodes, layers, composite };
 }
 
 /* ---------------- 写入 ---------------- */
@@ -283,68 +381,71 @@ function splitPlanes(imageData) {
   return [R, G, B, A];
 }
 
-// layers: [{ name, visible, opacity(0-1), blend, imageData }]，数组按「顶层在前」传入
-export function writePSD({ width, height, layers, compositeImage }) {
+// nodes: 图层树（底层在前）。
+//   组   { type:'group', name, visible, opacity, blend, expanded, children }
+//   图层 { type:'layer', name, visible, opacity, blend, clipping, lockAlpha, canvas, mask:{canvas,enabled} }
+export function writePSD({ width, height, nodes, layers, compositeImage }) {
   const w = width, h = height;
 
-  // 预编码每个图层的通道数据
-  const chanIds = [0, 1, 2, -1];
-  const encoded = layers.map(l => {
-    const planes = splitPlanes(l.imageData);
-    return chanIds.map((id, i) => encodeChannelRLE(planes[i], w, h));
-  });
+  // 兼容旧调用：扁平图层数组（顶层在前）
+  const tree = nodes || (layers || []).slice().reverse().map(l => ({
+    type: 'layer', name: l.name, visible: l.visible, opacity: l.opacity,
+    blend: l.blend, canvas: l.canvas || imageDataToCanvas(l.imageData, w, h),
+  }));
 
-  /* ---- 图层信息区 ---- */
+  // 1) 展开为记录序列：组 = 分隔符 + 子层 + 组头
+  const recs = [];
+  const emit = (list) => {
+    for (const n of list) {
+      if (n.type === 'group') {
+        recs.push({ kind: 'divider', node: n });
+        emit(n.children || []);
+        recs.push({ kind: 'folder', node: n });
+      } else {
+        recs.push({ kind: 'layer', node: n });
+      }
+    }
+  };
+  emit(tree);
+
+  // 2) 编码通道
+  for (const rec of recs) {
+    if (rec.kind !== 'layer') continue;
+    const n = rec.node;
+    const img = n.canvas.getContext('2d').getImageData(0, 0, w, h);
+    const planes = splitPlanes(img);
+    rec.chans = [
+      { id: 0, enc: encodeChannelRLE(planes[0], w, h) },
+      { id: 1, enc: encodeChannelRLE(planes[1], w, h) },
+      { id: 2, enc: encodeChannelRLE(planes[2], w, h) },
+      { id: -1, enc: encodeChannelRLE(planes[3], w, h) },
+    ];
+    if (n.mask && n.mask.canvas) {
+      const mImg = n.mask.canvas.getContext('2d').getImageData(0, 0, w, h);
+      const alpha = new Uint8Array(w * h);
+      const d = mImg.data;
+      for (let i = 0; i < w * h; i++) alpha[i] = d[i * 4 + 3];
+      rec.chans.push({ id: -2, enc: encodeChannelRLE(alpha, w, h) });
+      rec.maskDisabled = n.mask.enabled === false;
+    }
+  }
+
+  // 3) 图层信息区
   const li = new Writer();
-  li.i16(layers.length);
-  layers.forEach((l, li_idx) => {
-    li.i32(0); li.i32(0); li.i32(h); li.i32(w); // 全尺寸图层
-    li.u16(4);
-    chanIds.forEach((id, ci) => {
-      li.i16(id);
-      li.u32(encoded[li_idx][ci].blockLen);
-    });
-    li.str('8BIM');
-    li.str(BLEND_TO_KEY[l.blend] || 'norm');
-    li.u8_(Math.round(l.opacity * 255));
-    li.u8_(0); // clipping
-    li.u8_(l.visible ? 0 : 2); // flags
-    li.u8_(0); // filler
-
-    // extra data
-    const extra = new Writer();
-    extra.u32(0); // 蒙版
-    extra.u32(0); // 混合范围
-    const ascii = (l.name || 'Layer').replace(/[^\x20-\x7E]/g, '?').slice(0, 255);
-    extra.u8_(ascii.length);
-    extra.str(ascii);
-    extra.pad((4 - ((1 + ascii.length) % 4)) % 4);
-    // luni：Unicode 图层名
-    const uni = l.name || 'Layer';
-    const luni = new Writer();
-    luni.str('8BIM');
-    luni.str('luni');
-    luni.u32(4 + uni.length * 2);
-    luni.u32(uni.length);
-    for (let i = 0; i < uni.length; i++) luni.u16(uni.charCodeAt(i));
-    if ((4 + uni.length * 2) % 2) luni.u8_(0);
-    extra.bytes(luni.concat());
-
-    li.u32(extra.len);
-    li.bytes(extra.concat());
-  });
-  // 通道像素数据
-  layers.forEach((l, li_idx) => {
-    encoded[li_idx].forEach(ch => {
+  li.i16(recs.length);
+  for (const rec of recs) writeRecord(li, rec, w, h);
+  for (const rec of recs) {
+    if (!rec.chans) continue;
+    for (const c of rec.chans) {
       li.u16(1); // RLE
-      for (let y = 0; y < h; y++) li.u16(ch.counts[y]);
-      for (const part of ch.parts) li.bytes(part);
-    });
-  });
+      for (let y = 0; y < h; y++) li.u16(c.enc.counts[y]);
+      for (const part of c.enc.parts) li.bytes(part);
+    }
+  }
   const liBytes = li.concat();
   const liPadded = liBytes.length % 2 ? liBytes.length + 1 : liBytes.length;
 
-  /* ---- 合成图像（RGB 三通道 RLE）---- */
+  // 4) 合成图像（RGB 三通道 RLE）
   const comp = new Writer();
   comp.u16(1);
   const compPlanes = splitPlanes(compositeImage).slice(0, 3);
@@ -352,26 +453,97 @@ export function writePSD({ width, height, layers, compositeImage }) {
   for (const ch of compEncoded) for (let y = 0; y < h; y++) comp.u16(ch.counts[y]);
   for (const ch of compEncoded) for (const part of ch.parts) comp.bytes(part);
 
-  /* ---- 组装文件 ---- */
+  // 5) 组装文件
   const out = new Writer();
   out.str('8BPS');
   out.u16(1);
   out.bytes(new Uint8Array(6));
-  out.u16(3); // 合成图通道数 RGB
+  out.u16(3);
   out.u32(h);
   out.u32(w);
   out.u16(8);
-  out.u16(3); // RGB
+  out.u16(3);
   out.u32(0); // 颜色模式数据
   out.u32(0); // 图像资源
-  // 图层与蒙版区
   out.u32(4 + liPadded + 4);
   out.u32(liPadded);
   out.bytes(liBytes);
   if (liBytes.length % 2) out.u8_(0);
   out.u32(0); // 全局蒙版
-  // 合成图像数据
   out.bytes(comp.concat());
 
   return out.concat();
+}
+
+function imageDataToCanvas(imgData, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  c.getContext('2d').putImageData(imgData, 0, 0);
+  return c;
+}
+
+function writeRecord(li, rec, w, h) {
+  const node = rec.node || {};
+  const chans = rec.chans || [];
+  const isDivider = rec.kind === 'divider';
+
+  if (isDivider) { li.i32(0); li.i32(0); li.i32(0); li.i32(0); }
+  else { li.i32(0); li.i32(0); li.i32(h); li.i32(w); }
+
+  li.u16(chans.length);
+  for (const c of chans) { li.i16(c.id); li.u32(c.enc.blockLen); }
+
+  li.str('8BIM');
+  li.str(BLEND_TO_KEY[node.blend] || 'norm');
+  li.u8_(Math.round((node.opacity === undefined ? 1 : node.opacity) * 255));
+  li.u8_(node.clipping ? 1 : 0);
+  let flags = 0;
+  if (node.visible === false) flags |= 2;
+  if (node.lockAlpha) flags |= 1;
+  li.u8_(flags);
+  li.u8_(0);
+
+  const extra = new Writer();
+  const hasMask = chans.some(c => c.id === -2);
+  if (hasMask) {
+    extra.u32(20);
+    extra.i32(0); extra.i32(0); extra.i32(h); extra.i32(w);
+    extra.u8_(rec.maskDisabled ? 2 : 0);
+    extra.u8_(0);
+    extra.u16(0);
+  } else {
+    extra.u32(0);
+  }
+  extra.u32(0); // 混合范围
+
+  // Pascal 名称
+  const name = isDivider ? '</Layer group>' : (node.name || 'Layer');
+  const ascii = name.replace(/[^\x20-\x7E]/g, '?').slice(0, 255);
+  extra.u8_(ascii.length);
+  extra.str(ascii);
+  extra.pad((4 - ((1 + ascii.length) % 4)) % 4);
+
+  // luni（Unicode 名称）
+  const luni = new Writer();
+  luni.str('8BIM');
+  luni.str('luni');
+  luni.u32(4 + name.length * 2);
+  luni.u32(name.length);
+  for (let i = 0; i < name.length; i++) luni.u16(name.charCodeAt(i));
+  if ((4 + name.length * 2) % 2) luni.u8_(0);
+  extra.bytes(luni.concat());
+
+  // lsct（分组标记）
+  if (rec.kind === 'divider') {
+    extra.str('8BIM'); extra.str('lsct'); extra.u32(4); extra.u32(3);
+  } else if (rec.kind === 'folder') {
+    extra.str('8BIM'); extra.str('lsct'); extra.u32(4); extra.u32(node.expanded === false ? 2 : 1);
+  }
+
+  const bytes = extra.concat();
+  const pad = bytes.length % 2;
+  li.u32(bytes.length + pad);
+  li.bytes(bytes);
+  if (pad) li.u8_(0);
 }
