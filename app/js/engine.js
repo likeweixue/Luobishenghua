@@ -18,6 +18,7 @@ export class Engine {
     this.selection = null;   // 选区（绘制蚂蚁线）
     this.transform = null;   // 自由变换浮动层
     this.previewPath = null; // 选区拖拽预览路径
+    this.gradientPreview = null; // 渐变拖拽预览
     this.antsPhase = 0;      // 蚂蚁线动画相位（屏幕像素）
     this.layers = null;   // 图层栈（M2 起由 LayerStack 接管）
   }
@@ -302,29 +303,7 @@ export class Engine {
     const clip = rect && !paperWasDirty ? this._worldRectToScreen(rect) : null;
     this._paintScreen(clip);
 
-    const ctx = this.ctx;
-    const v = this.view;
-    ctx.save();
-    this._applyView(ctx);
-
-    // 浮动变换层（图层上已挖空，这里补画预览）
-    if (this.transform) this.transform.render(ctx, v);
-    // 选区蚂蚁线
-    if (this.selection) this._drawSelection(ctx, v);
-    // 拖拽中的选区预览
-    if (this.previewPath) {
-      ctx.save();
-      ctx.lineWidth = 1 / v.scale;
-      ctx.setLineDash([4 / v.scale, 4 / v.scale]);
-      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-      ctx.stroke(this.previewPath);
-      ctx.lineDashOffset = -4 / v.scale;
-      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-      ctx.stroke(this.previewPath);
-      ctx.restore();
-    }
-
-    ctx.restore();
+    this._paintOverlays();
     if (this.onRender) this.onRender();
   }
 
@@ -351,6 +330,7 @@ export class Engine {
     this._applyView(ctx);
 
     if (this.transform) this.transform.render(ctx, v);
+    if (this.gradientPreview) this._drawGradientPreview(ctx);
     if (this.selection) this._drawSelection(ctx, v);
 
     if (this.previewPath) {
@@ -370,6 +350,46 @@ export class Engine {
 
   renderDirty(rect) {
     this.render(rect);
+  }
+
+  // 渐变拖拽预览：直接按真实渐变画在文档范围内，半透明覆盖
+  _drawGradientPreview(ctx) {
+    const g = this.gradientPreview;
+    if (!g) return;
+    const hex2rgba = (hex, a) => {
+      const m = hex.replace('#', '');
+      const v = m.length === 3 ? m.split('').map(c => c + c).join('') : m;
+      return `rgba(${parseInt(v.slice(0, 2), 16)},${parseInt(v.slice(2, 4), 16)},${parseInt(v.slice(4, 6), 16)},${a})`;
+    };
+    let grad;
+    if (g.type === 'radial') {
+      const r = Math.max(1, Math.hypot(g.x1 - g.x0, g.y1 - g.y0));
+      grad = ctx.createRadialGradient(g.x0, g.y0, 0, g.x0, g.y0, r);
+    } else {
+      const x1 = Math.abs(g.x1 - g.x0) < 0.01 && Math.abs(g.y1 - g.y0) < 0.01 ? g.x0 + 1 : g.x1;
+      grad = ctx.createLinearGradient(g.x0, g.y0, x1, g.y1);
+    }
+    const c1 = hex2rgba(g.color, 0.85);
+    const c2 = hex2rgba(g.color, 0);
+    grad.addColorStop(0, g.reverse ? c2 : c1);
+    grad.addColorStop(1, g.reverse ? c1 : c2);
+
+    ctx.save();
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, this.docW, this.docH);
+
+    // 方向指示线
+    const lw = 1.2 / this.view.scale;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth = lw * 2;
+    ctx.beginPath();
+    ctx.moveTo(g.x0, g.y0);
+    ctx.lineTo(g.x1, g.y1);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.lineWidth = lw;
+    ctx.stroke();
+    ctx.restore();
   }
 
   _drawSelection(ctx, v) {

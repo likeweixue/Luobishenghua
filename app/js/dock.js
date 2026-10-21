@@ -14,6 +14,9 @@ export class Dock {
     this.preview.className = 'dock-preview';
     stageEl.appendChild(this.preview);
 
+    // 停靠列滚动偏移（面板总高超过窗口时用滚轮上下滚）
+    this.scroll = { left: 0, right: 0 };
+
     for (const el of this.panels) this.initPanel(el);
 
     window.addEventListener('resize', () => {
@@ -42,6 +45,35 @@ export class Dock {
     });
 
     title.addEventListener('pointerdown', (e) => this.startDrag(e, el));
+
+    // 停靠列滚轮滚动：鼠标在面板上滚动时整列上/下移
+    el.addEventListener('wheel', (e) => {
+      const side = el.dataset.dock;
+      if (!side || e.ctrlKey) return;
+      if (Math.abs(e.deltaY) < 1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.scrollColumn(side, e.deltaY);
+    }, { passive: false });
+  }
+
+  // 面板总高超出可视高度时，允许整列滚动
+  columnMaxScroll(side) {
+    const list = this.column(side);
+    const total = list.reduce((sum, p) => sum + p.offsetHeight + DOCK_GAP, 0);
+    return Math.max(0, total - this.stage.clientHeight + GAP);
+  }
+
+  scrollColumn(side, dy) {
+    const max = this.columnMaxScroll(side);
+    if (max <= 0) {
+      if (this.scroll[side] !== 0) { this.scroll[side] = 0; this.reflow(side); }
+      return;
+    }
+    const next = Math.max(0, Math.min(max, (this.scroll[side] || 0) + dy));
+    if (next === this.scroll[side]) return;
+    this.scroll[side] = next;
+    this.reflow(side);
   }
 
   /* ---------- 面板显隐（窗口菜单用） ---------- */
@@ -67,9 +99,9 @@ export class Dock {
     return p && !p.classList.contains('panel-hidden');
   }
 
-  // 恢复默认布局（左侧：工具/笔刷仓库/颜色；右侧：导航器/图层/历史）
+  // 恢复默认布局（左侧：工具/笔刷仓库/笔刷动态/颜色；右侧：导航器/图层/历史）
   resetLayout() {
-    const defaults = { left: ['tools', 'brushes', 'color'], right: ['navigator', 'layers', 'history'] };
+    const defaults = { left: ['tools', 'brushes', 'dynamics', 'color'], right: ['navigator', 'layers', 'history'] };
     for (const [side, ids] of Object.entries(defaults)) {
       ids.forEach((id, i) => {
         const p = this.panels.find(p => p.dataset.panel === id);
@@ -99,7 +131,10 @@ export class Dock {
 
   reflow(side) {
     const list = this.column(side);
-    let y = DOCK_GAP;
+    const max = this.columnMaxScroll(side);
+    this.scroll[side] = Math.max(0, Math.min(max, this.scroll[side] || 0));
+
+    let y = DOCK_GAP - this.scroll[side];
     list.forEach((p, i) => {
       p.dataset.order = i;
       p.style.left = side === 'left'

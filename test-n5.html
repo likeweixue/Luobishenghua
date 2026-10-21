@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>N5 TEST</title></head>
+<body>
+<pre id="out">running…</pre>
+<script type="module">
+import { floodFill, drawGradient, Smudge, pickColor } from './app/js/paint.js';
+import { Dynamics } from './app/js/dynamics.js';
+import { Selection } from './app/js/selection.js';
+
+const out = [];
+let pass = 0, fail = 0;
+const check = (c, label, extra = '') => {
+  if (c) { pass++; out.push('✅ ' + label); }
+  else { fail++; out.push('❌ ' + label + (extra ? ' — ' + extra : '')); }
+};
+const px = (canvas, x, y) => {
+  const d = canvas.getContext('2d').getImageData(x, y, 1, 1).data;
+  return [d[0], d[1], d[2], d[3]];
+};
+const mk = (w, h) => {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  return c;
+};
+const rectPath = (x, y, w, h) => { const p = new Path2D(); p.rect(x, y, w, h); return p; };
+
+try {
+  /* ================= 1. 油漆桶：基础填充 ================= */
+  const c1 = mk(100, 100),
+        x1 = c1.getContext('2d');
+  x1.fillStyle = '#ffffff';
+  x1.fillRect(0, 0, 100, 100);
+  let r = floodFill(c1, 100, 100, 50, 50, '#e24b4a', { tolerance: 10 });
+  check(r && r.count === 10000, '空白画布全填充 10000 像素', r && r.count);
+  check(px(c1, 10, 10)[0] > 200 && px(c1, 90, 90)[1] < 100, '填充色生效', px(c1, 10, 10) + '');
+
+  /* ================= 2. 容差 ================= */
+  const c2 = mk(100, 100), x2 = c2.getContext('2d');
+  x2.fillStyle = '#808080'; x2.fillRect(0, 0, 50, 100);
+  x2.fillStyle = '#888888'; x2.fillRect(50, 0, 50, 100);
+  const c2b = mk(100, 100);
+  c2b.getContext('2d').drawImage(c2, 0, 0);
+  r = floodFill(c2, 100, 100, 10, 10, '#00ff00', { tolerance: 20 });
+  check(r.count === 10000, '容差 20 跨越 8/255 色差（填满 10000）', r.count);
+  r = floodFill(c2b, 100, 100, 10, 10, '#0000ff', { tolerance: 0 });
+  check(r.count === 5000, '容差 0 只填同色区（5000）', r.count);
+
+  /* ================= 3. 连续 vs 全图 ================= */
+  const c3 = mk(100, 100), x3 = c3.getContext('2d');
+  x3.fillStyle = '#ffffff'; x3.fillRect(0, 0, 100, 100);
+  x3.fillStyle = '#000000';
+  x3.fillRect(10, 10, 20, 20);
+  x3.fillRect(70, 70, 20, 20);
+  const c3b = mk(100, 100);
+  c3b.getContext('2d').drawImage(c3, 0, 0);
+  r = floodFill(c3, 100, 100, 15, 15, '#e24b4a', { tolerance: 10, contiguous: true });
+  check(r.count === 400, '连续模式只填一块（400）', r.count);
+  check(px(c3, 75, 75)[0] < 30, '另一块保持黑色', px(c3, 75, 75) + '');
+  r = floodFill(c3b, 100, 100, 15, 15, '#1d9e75', { tolerance: 10, contiguous: false });
+  check(r.count === 800, '全图模式填两块（800）', r.count);
+
+  /* ================= 4. 选区蒙版 ================= */
+  const c4 = mk(100, 100), x4 = c4.getContext('2d');
+  x4.fillStyle = '#ffffff'; x4.fillRect(0, 0, 100, 100);
+  const sel = new Selection(100, 100);
+  sel.setPath(rectPath(20, 20, 30, 30), 'replace');
+  r = floodFill(c4, 100, 100, 50, 50, '#378add', { tolerance: 10, mask: sel.mask });
+  check(r.count === 10000, '填充计算覆盖全区（10000）', r.count);
+  const inside = px(c4, 30, 30);
+  const outside = px(c4, 80, 80);
+  check(inside[2] > 150 && inside[0] < 100, '选区内被填充', inside + '');
+  check(outside[0] > 240 && outside[1] > 240 && outside[2] > 240, '选区外保持白色', outside + '');
+
+  /* ================= 5. 锁定透明像素 ================= */
+  const c5 = mk(100, 100), x5 = c5.getContext('2d');
+  x5.fillStyle = '#ffffff';
+  x5.fillRect(10, 10, 20, 20);   // 只有这块有像素
+  r = floodFill(c5, 100, 100, 15, 15, '#e24b4a', { tolerance: 10, contiguous: false, lockAlpha: true });
+  check(px(c5, 15, 15)[0] > 200, '锁透明：已有像素被填充', px(c5, 15, 15) + '');
+  check(px(c5, 60, 60)[3] === 0, '锁透明：空白区仍透明', px(c5, 60, 60) + '');
+
+  /* ================= 6. 渐变 ================= */
+  const c6 = mk(100, 100);
+  drawGradient(c6, 100, 100, { x0: 0, y0: 50, x1: 100, y1: 50, type: 'linear', color: '#e24b4a' });
+  const gL = px(c6, 2, 50), gR = px(c6, 98, 50);
+  check(gL[3] > 200 && gL[0] > 200, '线性渐变起点不透明红', gL + '');
+  check(gR[3] < 40, '线性渐变终点透明', gR + '');
+
+  const c6r = mk(100, 100);
+  drawGradient(c6r, 100, 100, { x0: 0, y0: 50, x1: 100, y1: 50, type: 'linear', color: '#e24b4a', reverse: true });
+  check(px(c6r, 2, 50)[3] < 40 && px(c6r, 98, 50)[3] > 200, '反向渐变方向翻转',
+    px(c6r, 2, 50) + ' / ' + px(c6r, 98, 50));
+
+  const c6d = mk(100, 100);
+  drawGradient(c6d, 100, 100, { x0: 50, y0: 50, x1: 90, y1: 50, type: 'radial', color: '#378add' });
+  const center = px(c6d, 50, 50), edge = px(c6d, 95, 95);
+  check(center[3] > 200, '径向渐变中心不透明', center + '');
+  check(edge[3] < 60, '径向渐变边缘透明', edge + '');
+
+  const c6m = mk(100, 100);
+  const sel6 = new Selection(100, 100);
+  sel6.setPath(rectPath(0, 0, 50, 100), 'replace');
+  drawGradient(c6m, 100, 100, { x0: 0, y0: 0, x1: 100, y1: 0, color: '#1d9e75', mask: sel6.mask });
+  check(px(c6m, 10, 50)[3] > 150 && px(c6m, 90, 50)[3] === 0, '渐变受选区限制',
+    px(c6m, 10, 50) + ' / ' + px(c6m, 90, 50));
+
+  /* ================= 7. 吸管 ================= */
+  const c7 = mk(10, 10), x7 = c7.getContext('2d');
+  x7.fillStyle = '#123456';
+  x7.fillRect(0, 0, 10, 10);
+  check(pickColor(c7, 5, 5) === '#123456', '吸管取到精确颜色', pickColor(c7, 5, 5));
+  const c7t = mk(10, 10);
+  check(pickColor(c7t, 5, 5) === null, '透明区取色返回 null');
+  check(pickColor(c7, -3, 5) === null, '越界取色返回 null');
+
+  /* ================= 8. 涂抹 ================= */
+  const c8 = mk(120, 60), x8 = c8.getContext('2d');
+  x8.fillStyle = '#e24b4a';
+  x8.fillRect(0, 0, 60, 60);         // 左半红，右半透明
+  const layerStub = { canvas: c8, ctx: x8 };
+  const sm = new Smudge();
+  sm.begin(layerStub, 55, 30, 20, {});
+  for (let i = 1; i <= 8; i++) {
+    sm.drag(layerStub, 55 + i * 5, 30, 20, 0.8, {});
+  }
+  const dragged = px(c8, 85, 30);
+  check(dragged[0] > 150 && dragged[3] > 60, '涂抹把红色拖到空白区', dragged + '');
+  check(px(c8, 0, 0)[0] > 200, '涂抹不破坏远处原有像素', px(c8, 0, 0) + '');
+
+  // 涂抹 + 选区：选区外不落色
+  const c8b = mk(120, 60), x8b = c8b.getContext('2d');
+  x8b.fillStyle = '#378add';
+  x8b.fillRect(0, 0, 60, 60);
+  const sel8 = new Selection(120, 60);
+  sel8.setPath(rectPath(0, 0, 70, 60), 'replace');   // 只允许到 x=70
+  const layer8b = { canvas: c8b, ctx: x8b };
+  const sm2 = new Smudge();
+  sm2.begin(layer8b, 55, 30, 16, { mask: sel8.mask });
+  for (let i = 1; i <= 10; i++) sm2.drag(layer8b, 55 + i * 6, 30, 16, 0.9, { mask: sel8.mask });
+  check(px(c8b, 100, 30)[3] === 0, '涂抹被选区挡住（x>70 透明）', px(c8b, 100, 30) + '');
+
+  /* ================= 9. 压感曲线 ================= */
+  Dynamics.setPreset('linear');
+  check(Math.abs(Dynamics.map(0) - 0) < 0.01, '线性曲线 map(0)=0', Dynamics.map(0));
+  check(Math.abs(Dynamics.map(1) - 1) < 0.01, '线性曲线 map(1)=1', Dynamics.map(1));
+  check(Math.abs(Dynamics.map(0.5) - 0.5) < 0.02, '线性曲线 map(0.5)=0.5', Dynamics.map(0.5));
+
+  Dynamics.setPreset('soft');
+  check(Dynamics.map(0.5) < 0.42, '柔和曲线压低中段（<0.42）', Dynamics.map(0.5));
+  Dynamics.setPreset('hard');
+  check(Dynamics.map(0.5) > 0.6, '硬朗曲线抬高中段（>0.6）', Dynamics.map(0.5));
+
+  // 单调性
+  Dynamics.setPreset('soft');
+  let mono = true;
+  for (let i = 1; i < 256; i++) if (Dynamics.lut[i] < Dynamics.lut[i - 1] - 1e-6) mono = false;
+  check(mono, 'LUT 单调不减');
+
+  // 自定义点
+  Dynamics.setPoints([[0, 0], [0.5, 0.9], [1, 1]]);
+  check(Dynamics.map(0.5) > 0.85, '自定义曲线生效（map(0.5)>0.85）', Dynamics.map(0.5));
+  check(Dynamics.points[0][0] === 0 && Dynamics.points[Dynamics.points.length - 1][0] === 1,
+    '首尾控制点固定在 x=0/1');
+
+  /* ================= 10. 倾斜 ================= */
+  check(Math.abs(Dynamics.tiltFromEvent({ tiltX: 90, tiltY: 0 }) - 1) < 0.01, 'tiltX=90 视为满倾斜',
+    Dynamics.tiltFromEvent({ tiltX: 90, tiltY: 0 }));
+  check(Math.abs(Dynamics.tiltFromEvent({ tiltX: 0, tiltY: 45 }) - 0.5) < 0.01, 'tiltY=45 视为 0.5',
+    Dynamics.tiltFromEvent({ tiltX: 0, tiltY: 45 }));
+  check(Dynamics.tiltFromEvent({}) === 0, '不支持倾斜的设备返回 0');
+
+  Dynamics.tiltEnabled = false;
+  Dynamics.tilt = 1;
+  check(Dynamics.tiltSizeFactor() === 1, '关闭倾斜控制时不放大笔刷');
+  Dynamics.tiltEnabled = true;
+  Dynamics.tiltStrength = 1;
+  check(Dynamics.tiltSizeFactor() > 1.5, '开启后倾斜放大笔刷（>1.5x）', Dynamics.tiltSizeFactor());
+  Dynamics.tiltEnabled = false;
+  Dynamics.tilt = 0;
+
+  /* ================= 11. 序列化 ================= */
+  Dynamics.setPreset('hard');
+  Dynamics.spacingScale = 1.4;
+  Dynamics.scatter = 0.2;
+  const json = JSON.parse(JSON.stringify(Dynamics.toJSON()));
+  Dynamics.setPreset('linear');
+  Dynamics.spacingScale = 1;
+  Dynamics.scatter = 0;
+  Dynamics.load(json);
+  check(Math.abs(Dynamics.map(0.5) - 0.68) < 0.03, '动态设置序列化往返：曲线', Dynamics.map(0.5));
+  check(Math.abs(Dynamics.spacingScale - 1.4) < 1e-6, '动态设置序列化往返：间距', Dynamics.spacingScale);
+  check(Math.abs(Dynamics.scatter - 0.2) < 1e-6, '动态设置序列化往返：散布', Dynamics.scatter);
+
+} catch (err) {
+  out.push('💥 异常：' + (err && err.stack ? err.stack : err));
+  fail++;
+}
+
+Dynamics.setPreset('linear');
+Dynamics.spacingScale = 1;
+Dynamics.scatter = 0;
+document.title = fail === 0 ? 'BENCH DONE' : 'ERROR';
+document.getElementById('out').textContent =
+  `N5 测试：${pass} 通过 / ${fail} 失败\n\n` + out.join('\n');
+</script>
+</body>
+</html>

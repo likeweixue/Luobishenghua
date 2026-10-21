@@ -9,11 +9,16 @@ import { serializeProject, deserializeProject, PROJECT_EXT } from './project.js'
 import { idbPut, idbGet, idbDelete } from './idb.js';
 import { Selection } from './selection.js';
 import { Transform } from './transform.js';
+import { Dynamics, CurveEditor } from './dynamics.js';
+import { floodFill, drawGradient, Smudge, pickColor } from './paint.js';
 
 /* ---------------- 设置（localStorage 持久化） ---------------- */
 
 const settings = Object.assign(
-  { undoLimit: 50, defaultWidth: 1600, defaultHeight: 1600, autosaveSec: 60 },
+  {
+    undoLimit: 50, defaultWidth: 1600, defaultHeight: 1600, autosaveSec: 60,
+    dynamics: null,          // 压感曲线 + 倾斜 / 间距 / 散布
+  },
   JSON.parse(localStorage.getItem('lbsh-settings') || '{}')
 );
 function saveSettings() {
@@ -57,7 +62,22 @@ const state = {
   polyPoints: null,       // 多边形套索顶点
   transforming: false,
   strokeTarget: 'layer',
+  // N5 新增工具
+  smudgeSession: null,     // 涂抹采样缓冲
+  smudgeStrength: 0.55,
+  fillTolerance: 32,
+  fillContiguous: true,
+  gradType: 'linear',
+  gradReverse: false,
+  gradDrag: null,          // 渐变拖拽 { x0,y0,x1,y1 }
+  pickMode: 'all',         // 吸管取样：all | layer
+  altPick: false,          // 按住 Alt 临时吸管
+  tilt: 0,
 };
+
+// 恢复上次的笔刷动态设置
+if (settings.dynamics) Dynamics.load(settings.dynamics);
+else Dynamics.rebuild();
 
 /* ---------------- 工程状态 ---------------- */
 
@@ -93,8 +113,15 @@ const TOOL_META = {
   ellipse: { icon: '◯', name: '椭圆选框' },
   lasso: { icon: '〰', name: '套索' },
   poly: { icon: '⬠', name: '多边形套索' },
+  smudge: { icon: '◍', name: '涂抹' },
+  bucket: { icon: '▨', name: '油漆桶' },
+  gradient: { icon: '▤', name: '渐变' },
+  eyedropper: { icon: '⚲', name: '吸管' },
   hand: { icon: '✋', name: '抓手' },
 };
+
+// 需要「粗细 / 不透明度 / 防抖」的工具
+const BRUSHISH = ['brush', 'eraser', 'smudge'];
 
 const SELECT_TOOLS = ['rect', 'ellipse', 'lasso', 'poly'];
 function isSelectTool(t) { return SELECT_TOOLS.includes(t); }
@@ -114,10 +141,14 @@ function refreshOptionsBarTool() {
 }
 
 function updateOptionsBar() {
-  const brushish = state.tool === 'brush' || state.tool === 'eraser';
+  const brushish = BRUSHISH.includes(state.tool);
   const tr = transform.active;
   const selish = !tr && (isSelectTool(state.tool) || selection.active);
   document.getElementById('opt-brush-group').classList.toggle('hidden', !brushish);
+  document.getElementById('opt-smudge-group').classList.toggle('hidden', state.tool !== 'smudge');
+  document.getElementById('opt-bucket-group').classList.toggle('hidden', state.tool !== 'bucket');
+  document.getElementById('opt-gradient-group').classList.toggle('hidden', state.tool !== 'gradient');
+  document.getElementById('opt-pick-group').classList.toggle('hidden', state.tool !== 'eyedropper');
   document.getElementById('opt-transform-group').classList.toggle('hidden', !tr);
   document.getElementById('opt-select-group').classList.toggle('hidden', !selish);
   document.getElementById('btn-sel-none').disabled = !selection.active;
@@ -264,6 +295,110 @@ opacityInput.addEventListener('input', () => {
 smoothingInput.addEventListener('input', () => {
   state.smoothing = +smoothingInput.value / 100;
   document.getElementById('brush-smoothing-val').textContent = smoothingInput.value + '%';
+});
+
+/* ---------------- 笔刷动态面板 ---------------- */
+
+const curveEditor = new CurveEditor(document.getElementById('curve-editor'));
+
+function persistDynamics() {
+  settings.dynamics = Dynamics.toJSON();
+  saveSettings();
+}
+
+function syncDynamicsUI() {
+  document.getElementById('dyn-tilt').checked = Dynamics.tiltEnabled;
+  const sp = Math.round(Dynamics.spacingScale * 100);
+  document.getElementById('dyn-spacing').value = sp;
+  document.getElementById('dyn-spacing-val').textContent = sp + '%';
+  const sc = Math.round(Dynamics.scatter * 100);
+  document.getElementById('dyn-scatter').value = sc;
+  document.getElementById('dyn-scatter-val').textContent = sc + '%';
+  curveEditor.draw();
+  // 曲线与预设一致时把下拉切过去，否则显示「自定义」
+  const presetSel = document.getElementById('dyn-curve-preset');
+  const name = matchCurvePreset();
+  if (name) presetSel.value = name;
+  else {
+    if (!presetSel.querySelector('option[value=""]')) {
+      const o = document.createElement('option');
+      o.value = '';
+      o.textContent = '自定义';
+      presetSel.appendChild(o);
+    }
+    presetSel.value = '';
+  }
+}
+
+function matchCurvePreset() {
+  const curves = {
+    linear: [[0, 0], [0.25, 0.25], [0.5, 0.5], [0.75, 0.75], [1, 1]],
+    soft: [[0, 0], [0.25, 0.12], [0.5, 0.38], [0.75, 0.72], [1, 1]],
+    hard: [[0, 0], [0.25, 0.42], [0.5, 0.68], [0.75, 0.87], [1, 1]],
+    light: [[0, 0.15], [0.5, 0.6], [1, 1]],
+  };
+  const near = (a, b) => Math.abs(a[0] - b[0]) < 0.02 && Math.abs(a[1] - b[1]) < 0.02;
+  for (const [name, pts] of Object.entries(curves)) {
+    if (pts.length !== Dynamics.points.length) continue;
+    if (pts.every((p, i) => near(p, Dynamics.points[i]))) return name;
+  }
+  return null;
+}
+
+Dynamics.onChange = () => {
+  persistDynamics();
+  syncDynamicsUI();
+};
+syncDynamicsUI();
+
+document.getElementById('dyn-curve-preset').addEventListener('change', (e) => {
+  if (!e.target.value) return;
+  Dynamics.setPreset(e.target.value);
+});
+
+document.getElementById('dyn-tilt').addEventListener('change', (e) => {
+  Dynamics.tiltEnabled = e.target.checked;
+  persistDynamics();
+});
+
+document.getElementById('dyn-spacing').addEventListener('input', (e) => {
+  Dynamics.spacingScale = +e.target.value / 100;
+  document.getElementById('dyn-spacing-val').textContent = e.target.value + '%';
+  persistDynamics();
+});
+
+document.getElementById('dyn-scatter').addEventListener('input', (e) => {
+  Dynamics.scatter = +e.target.value / 100;
+  document.getElementById('dyn-scatter-val').textContent = e.target.value + '%';
+  persistDynamics();
+});
+
+/* ---------------- 新工具参数 ---------------- */
+
+document.getElementById('smudge-strength').addEventListener('input', (e) => {
+  state.smudgeStrength = +e.target.value / 100;
+  document.getElementById('smudge-strength-val').textContent = e.target.value + '%';
+});
+
+document.getElementById('fill-tolerance').addEventListener('input', (e) => {
+  state.fillTolerance = +e.target.value;
+  document.getElementById('fill-tolerance-val').textContent = e.target.value;
+});
+
+document.getElementById('fill-contiguous').addEventListener('change', (e) => {
+  state.fillContiguous = e.target.checked;
+});
+
+document.getElementById('grad-type').addEventListener('change', (e) => {
+  state.gradType = e.target.value;
+});
+
+document.getElementById('grad-reverse').addEventListener('change', (e) => {
+  state.gradReverse = e.target.checked;
+});
+
+document.getElementById('pick-mode').addEventListener('change', (e) => {
+  state.pickMode = e.target.value;
 });
 
 /* ---------------- 图层面板 ---------------- */
@@ -1088,8 +1223,10 @@ function activeCtx() {
 }
 
 function getPressure(e) {
-  if (e.pointerType === 'pen' && e.pressure > 0) return e.pressure;
-  return 0.5;
+  const raw = (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 0.5;
+  state.tilt = Dynamics.tiltFromEvent(e);
+  // 数位笔走可调压感曲线；鼠标/触控板固定 50%，避免曲线把鼠标笔画改细
+  return e.pointerType === 'pen' ? Dynamics.map(raw) : raw;
 }
 
 /* ---------------- 笔画渲染调度（脏矩形 + rAF 合并） ---------------- */
@@ -1175,8 +1312,9 @@ function stampAt(x, y, pressure) {
   if (l.type !== 'layer' && !(state.editMask && l.mask)) return;
   const type = activeBrushType();
   const preset = BrushRegistry.get(type);
-  const size = pressureSize(type, state.size, pressure);
+  const size = pressureSize(type, state.size, pressure) * Dynamics.tiltSizeFactor();
   const alpha = pressureAlpha(type, state.opacity, pressure);
+  const scatter = (preset.jitter || 0) + Dynamics.scatter;
   markDabDirty(x, y, size);
   // 落笔前先为将被覆盖的瓦片保存 before 像素（增量撤销）
   if (state.journal) state.journal.captureBefore(x, y, size / 2 + 2);
@@ -1190,9 +1328,9 @@ function stampAt(x, y, pressure) {
   }
 
   if (selection.active && l.type === 'layer') {
-    maskedDab(l.ctx, type, state.color, x, y, size, alpha, preset.jitter || 0);
+    maskedDab(l.ctx, type, state.color, x, y, size, alpha, scatter);
   } else {
-    drawDab(l.ctx, type, state.color, x, y, size, alpha, preset.jitter || 0);
+    drawDab(l.ctx, type, state.color, x, y, size, alpha, scatter);
   }
 }
 
@@ -1209,6 +1347,7 @@ function beginStroke(e) {
   if (target === 'layer' && l.lockAlpha) {
     l.ctx.save();
     l.ctx.globalCompositeOperation = 'source-atop';
+    state.lockAlphaSaved = true;
   }
   const p = engine.screenToWorld(e.offsetX, e.offsetY);
   const pressure = getPressure(e);
@@ -1239,8 +1378,8 @@ function continueStroke(e) {
     let dx = p.x - last.x;
     let dy = p.y - last.y;
     let dist = Math.hypot(dx, dy);
-    const curSize = pressureSize(activeBrushType(), state.size, pressure);
-    const spacing = Math.max(0.4, curSize * preset.spacingRatio);
+    const curSize = pressureSize(activeBrushType(), state.size, pressure) * Dynamics.tiltSizeFactor();
+    const spacing = Math.max(0.4, curSize * preset.spacingRatio * Dynamics.spacingScale);
 
     while (state.spacingLeft + dist >= spacing) {
       const t = (spacing - state.spacingLeft) / dist;
@@ -1263,6 +1402,171 @@ function continueStroke(e) {
       `压感: ${Math.round(pressure * 100)}%` + (ev.pointerType === 'pen' ? ' (数位笔)' : ' (鼠标/触控板)');
   }
   scheduleStrokeRender();
+}
+
+/* ---------------- 油漆桶 / 渐变 / 涂抹 / 吸管 ---------------- */
+
+function selMask() {
+  return selection.active ? selection.mask : null;
+}
+
+function setColor(hex) {
+  state.color = hex;
+  wheel.setHex(hex);
+  colorChip.style.background = hex;
+  const el = document.getElementById('status-color');
+  if (el) el.textContent = `前景 ${hex}`;
+}
+
+function doBucketFill(e) {
+  if (transformGuard()) return;
+  const l = targetLayer();
+  if (!l) return;
+  const p = engine.screenToWorld(e.offsetX, e.offsetY);
+  const before = history.captureLayer(l.id);
+  const res = floodFill(l.canvas, layers.w, layers.h, p.x, p.y, state.color, {
+    tolerance: state.fillTolerance,
+    contiguous: state.fillContiguous,
+    mask: selMask(),
+    alpha: state.opacity,
+    lockAlpha: l.lockAlpha,
+  });
+  if (!res || res.count === 0) { toast('这个位置没有可填充的区域'); return; }
+  history.pushLayerDiff(l.id, before, `油漆桶 ${res.count}px`);
+  engine.render();
+  refreshThumbs();
+  updateStatus();
+  toast(`填充 ${res.count.toLocaleString()} 像素`);
+}
+
+function startGradient(e) {
+  if (transformGuard()) return;
+  const p = engine.screenToWorld(e.offsetX, e.offsetY);
+  state.gradDrag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+  engine.gradientPreview = {
+    ...state.gradDrag, type: state.gradType, color: state.color, reverse: state.gradReverse,
+  };
+  engine.renderViewOnly();
+}
+
+function moveGradient(e) {
+  const d = state.gradDrag;
+  if (!d) return;
+  const p = engine.screenToWorld(e.offsetX, e.offsetY);
+  if (e.shiftKey) {
+    // Shift 约束到水平 / 垂直 / 45°
+    const dx = p.x - d.x0;
+    const dy = p.y - d.y0;
+    if (Math.abs(dx) > Math.abs(dy) * 2) { d.x1 = p.x; d.y1 = d.y0; }
+    else if (Math.abs(dy) > Math.abs(dx) * 2) { d.x1 = d.x0; d.y1 = p.y; }
+    else {
+      const m = Math.max(Math.abs(dx), Math.abs(dy));
+      d.x1 = d.x0 + Math.sign(dx || 1) * m;
+      d.y1 = d.y0 + Math.sign(dy || 1) * m;
+    }
+  } else {
+    d.x1 = p.x;
+    d.y1 = p.y;
+  }
+  engine.gradientPreview = {
+    ...d, type: state.gradType, color: state.color, reverse: state.gradReverse,
+  };
+  engine.renderViewOnly();
+}
+
+function finishGradient() {
+  const d = state.gradDrag;
+  state.gradDrag = null;
+  engine.gradientPreview = null;
+  if (!d) return;
+  if (Math.hypot(d.x1 - d.x0, d.y1 - d.y0) < 2) {
+    engine.render();
+    toast('拖出一条线来定义渐变方向');
+    return;
+  }
+  const l = targetLayer();
+  if (!l) { engine.render(); return; }
+  const before = history.captureLayer(l.id);
+  drawGradient(l.canvas, layers.w, layers.h, {
+    x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1,
+    type: state.gradType,
+    color: state.color,
+    reverse: state.gradReverse,
+    alpha: state.opacity,
+    mask: selMask(),
+    lockAlpha: l.lockAlpha,
+  });
+  history.pushLayerDiff(l.id, before, `${state.gradType === 'radial' ? '径向' : '线性'}渐变`);
+  engine.render();
+  refreshThumbs();
+  updateStatus();
+}
+
+function beginSmudge(e) {
+  const l = targetLayer();
+  if (!l || !l.visible) return false;
+  state.journal = history.beginStroke(l.id, 'layer');
+  state.strokeTarget = 'layer';
+  const p = engine.screenToWorld(e.offsetX, e.offsetY);
+  state.smudgeSession = new Smudge();
+  state.smudgeSession.begin(l, p.x, p.y, state.size, { mask: selMask() });
+  state.last = { x: p.x, y: p.y, pressure: getPressure(e) };
+  state.spacingLeft = 0;
+  return true;
+}
+
+function stampSmudge(l, s, x, y) {
+  const size = state.size;
+  markDabDirty(x, y, size);
+  if (state.journal) state.journal.captureBefore(x, y, size / 2 + 2);
+  s.drag(l, x, y, size, state.smudgeStrength, {
+    mask: selMask(),
+    lockAlpha: l.lockAlpha,
+  });
+}
+
+function continueSmudge(e) {
+  const l = layers.active;
+  const s = state.smudgeSession;
+  if (!l || !s) return;
+  const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  for (const ev of events) {
+    const p = engine.screenToWorld(ev.offsetX, ev.offsetY);
+    const last = state.last;
+    let dx = p.x - last.x;
+    let dy = p.y - last.y;
+    let dist = Math.hypot(dx, dy);
+    const step = Math.max(1, state.size * 0.12);
+    while (dist >= step) {
+      const t = step / dist;
+      const ix = last.x + dx * t;
+      const iy = last.y + dy * t;
+      stampSmudge(l, s, ix, iy);
+      dx = p.x - ix;
+      dy = p.y - iy;
+      dist = Math.hypot(dx, dy);
+      last.x = ix;
+      last.y = iy;
+    }
+    state.last = { x: p.x, y: p.y, pressure: getPressure(ev) };
+  }
+  scheduleStrokeRender();
+}
+
+function sampleCanvas() {
+  if (state.pickMode === 'layer') {
+    const l = layers.active;
+    if (l && l.type === 'layer') return l.canvas;
+  }
+  return engine.doc;
+}
+
+function pickAt(e) {
+  const p = engine.screenToWorld(e.offsetX, e.offsetY);
+  const hex = pickColor(sampleCanvas(), p.x, p.y);
+  if (!hex) return false;
+  setColor(hex);
+  return true;
 }
 
 /* ---------------- 指针事件 ---------------- */
@@ -1612,7 +1916,24 @@ canvas.addEventListener('pointerdown', (e) => {
   // 3) 选区工具
   if (isSelectTool(state.tool)) { startSelection(e); return; }
 
-  // 4) 画笔 / 橡皮
+  // 4) 按住 Alt 临时吸管（画笔/橡皮/涂抹时）
+  if (e.altKey && BRUSHISH.includes(state.tool)) {
+    state.altPick = true;
+    pickAt(e);
+    return;
+  }
+
+  // 5) 油漆桶 / 渐变 / 吸管 / 涂抹
+  if (state.tool === 'bucket') { doBucketFill(e); return; }
+  if (state.tool === 'gradient') { startGradient(e); return; }
+  if (state.tool === 'eyedropper') { pickAt(e); return; }
+  if (state.tool === 'smudge') {
+    state.drawing = beginSmudge(e);
+    updateStatus();
+    return;
+  }
+
+  // 6) 画笔 / 橡皮
   state.drawing = beginStroke(e);
   updateStatus();
 });
@@ -1628,13 +1949,20 @@ canvas.addEventListener('pointermove', (e) => {
     transform.pointerMove(e.offsetX, e.offsetY, e.shiftKey);
     return;
   }
+  if (state.gradDrag) { moveGradient(e); return; }
   if (state.selDrag) { moveSelection(e); return; }
   if (state.polyPoints) { updatePolyPreview(engine.screenToWorld(e.offsetX, e.offsetY)); return; }
-  if (state.drawing) continueStroke(e);
+  if (state.altPick) { pickAt(e); return; }
+  if (state.tool === 'eyedropper' && (e.buttons & 1)) { pickAt(e); return; }
+  if (state.drawing) {
+    if (state.smudgeSession) continueSmudge(e);
+    else continueStroke(e);
+  }
 });
 
 function endPointer(e) {
   if (state.panning) state.panning = false;
+  if (state.altPick) state.altPick = false;
 
   if (state.transforming) {
     state.transforming = false;
@@ -1642,6 +1970,7 @@ function endPointer(e) {
     updateOptionsBar();
   }
 
+  if (state.gradDrag) finishGradient();
   if (state.selDrag) finishSelection(e);
 
   if (state.drawing) {
@@ -1650,16 +1979,20 @@ function endPointer(e) {
     state.smoothPoint = null;
     flushStrokeRender();
     const act = layers.active;
-    if (act && act.type === 'layer' && state.strokeTarget === 'layer' && act.lockAlpha) {
+    if (state.lockAlphaSaved && act && act.type === 'layer') {
       act.ctx.restore();  // 解除 source-atop
       act.ctx.globalCompositeOperation = 'source-over';
+      state.lockAlphaSaved = false;
     }
     if (state.journal) {
       const toolName = state.tool === 'eraser' ? '橡皮擦' : (BrushRegistry.get(state.brush)?.name || '画笔');
-      const where = state.strokeTarget === 'mask' ? '蒙版' : toolName;
+      const where = state.strokeTarget === 'mask' ? '蒙版'
+        : state.smudgeSession ? '涂抹'
+        : toolName;
       history.commitStroke(state.journal, `${where} ${state.size}px`);
       state.journal = null;
     }
+    state.smudgeSession = null;
     refreshThumbs();
     updateStatus();
   }
@@ -1776,6 +2109,9 @@ window.addEventListener('keydown', (e) => {
   if (e.key.toLowerCase() === 'v') setTool('move');
   if (e.key.toLowerCase() === 'm') setTool(e.shiftKey ? 'ellipse' : 'rect');
   if (e.key.toLowerCase() === 'l') setTool(e.shiftKey ? 'poly' : 'lasso');
+  if (e.key.toLowerCase() === 's') setTool('smudge');
+  if (e.key.toLowerCase() === 'g') setTool(e.shiftKey ? 'gradient' : 'bucket');
+  if (e.key.toLowerCase() === 'i') setTool('eyedropper');
 });
 window.addEventListener('keyup', (e) => {
   if (e.code === 'Space') {
@@ -1802,12 +2138,15 @@ if (!/[?&]nohome=1/.test(location.search)) homeApi.show();
 
 /* ---------------- 调试/自动化钩子（不影响正常使用） ---------------- */
 window.__lbsh = {
-  engine, layers, history, selection, transform, state,
+  engine, layers, history, selection, transform, state, Dynamics,
   doAutosave,
   saveProject,
   openProjectFromBytes,
   newDocument,
   maskedDab,
+  doBucketFill, startGradient, moveGradient, finishGradient,
+  beginSmudge, continueSmudge, stampSmudge, pickAt, setColor,
+  floodFill, drawGradient,
   setTool, updateOptionsBar,
   selectAll, deselect, invertSelection, featherSelection,
   copySelection, pasteClipboard, clearSelectionContent, fillSelection,

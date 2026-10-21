@@ -33,6 +33,41 @@
       </label>
     </div>
 
+    <div class="opt-group hidden" id="opt-smudge-group">
+      <label class="opt" title="涂抹强度：每次移动携带多少像素">强度
+        <input type="range" id="smudge-strength" min="5" max="100" value="55">
+        <span class="val" id="smudge-strength-val">55%</span>
+      </label>
+    </div>
+
+    <div class="opt-group hidden" id="opt-bucket-group">
+      <label class="opt" title="颜色差异在容差内视为同一区域">容差
+        <input type="range" id="fill-tolerance" min="0" max="255" value="32">
+        <span class="val" id="fill-tolerance-val">32</span>
+      </label>
+      <label class="opt opt-check"><input type="checkbox" id="fill-contiguous" checked> 连续</label>
+    </div>
+
+    <div class="opt-group hidden" id="opt-gradient-group">
+      <label class="opt">类型
+        <select id="grad-type">
+          <option value="linear">线性</option>
+          <option value="radial">径向</option>
+        </select>
+      </label>
+      <label class="opt opt-check"><input type="checkbox" id="grad-reverse"> 反向</label>
+      <span class="opt-hint">前景色 → 透明</span>
+    </div>
+
+    <div class="opt-group hidden" id="opt-pick-group">
+      <label class="opt">取样
+        <select id="pick-mode">
+          <option value="all">所有图层</option>
+          <option value="layer">当前图层</option>
+        </select>
+      </label>
+    </div>
+
     <div class="opt-group hidden" id="opt-select-group">
       <button id="btn-sel-all" title="全选 (Cmd+A)">全选</button>
       <button id="btn-sel-invert" title="反选 (Shift+Cmd+I)">反选</button>
@@ -83,6 +118,10 @@
           <div class="tool-list" id="tool-list">
             <button data-tool="brush" class="active"><i>✏</i> 画笔 <kbd>B</kbd></button>
             <button data-tool="eraser"><i>◻</i> 橡皮 <kbd>E</kbd></button>
+            <button data-tool="smudge"><i>◍</i> 涂抹 <kbd>S</kbd></button>
+            <button data-tool="bucket"><i>▨</i> 油漆桶 <kbd>G</kbd></button>
+            <button data-tool="gradient"><i>▤</i> 渐变 <kbd>⇧G</kbd></button>
+            <button data-tool="eyedropper"><i>⚲</i> 吸管 <kbd>I</kbd></button>
             <button data-tool="move"><i>✥</i> 移动 <kbd>V</kbd></button>
             <button data-tool="rect"><i>▭</i> 矩形选框 <kbd>M</kbd></button>
             <button data-tool="ellipse"><i>◯</i> 椭圆选框</button>
@@ -101,6 +140,33 @@
             <input type="file" id="file-abr" accept=".abr" style="display:none">
           </div>
           <div class="brush-grid" id="brush-presets"></div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="dynamics" data-dock="left">
+        <div class="panel-title"><span class="grip"></span><span class="name">笔刷动态</span><button class="panel-collapse" title="折叠">–</button></div>
+        <div class="panel-body">
+          <div class="dyn-head">
+            <span>压感曲线</span>
+            <select id="dyn-curve-preset">
+              <option value="linear">线性</option>
+              <option value="soft">柔和</option>
+              <option value="hard">硬朗</option>
+              <option value="light">轻压</option>
+            </select>
+          </div>
+          <canvas id="curve-editor" width="200" height="118" class="curve-editor" title="拖动控制点调整笔压响应曲线，点空白处可新增控制点"></canvas>
+          <div class="dyn-row">
+            <label class="opt-check"><input type="checkbox" id="dyn-tilt"> 倾斜控制大小</label>
+          </div>
+          <label class="dyn-slider">间距
+            <input type="range" id="dyn-spacing" min="10" max="300" value="100">
+            <span class="val" id="dyn-spacing-val">100%</span>
+          </label>
+          <label class="dyn-slider">散布
+            <input type="range" id="dyn-scatter" min="0" max="100" value="0">
+            <span class="val" id="dyn-scatter-val">0%</span>
+          </label>
         </div>
       </section>
 
@@ -176,6 +242,7 @@
     <span id="status-doc">画布 1600 × 1600</span>
     <span id="status-brush"></span>
     <span id="status-pressure">压感: —</span>
+    <span id="status-color">前景 #222222</span>
     <span id="status-autosave"></span>
     <span class="hint">拖动标题栏可移动面板 · 拖到左右边缘贴合停靠 · 空格/H 抓手 · [ ] 调粗细</span>
   </footer>
@@ -235,7 +302,7 @@
     </div>
 
     <div class="home-foot">
-      <span>落笔生花 Luobishenghua · beta8</span>
+      <span>落笔生花 Luobishenghua · beta9</span>
       <span>WorkBuddy × likeweixue</span>
     </div>
   </div>

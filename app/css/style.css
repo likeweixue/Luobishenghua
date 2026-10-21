@@ -287,19 +287,19 @@ button.active { background: var(--accent); border-color: var(--accent); color: #
 }
 
 /* ---------- 面板内容 ---------- */
-.tool-list { display: flex; flex-direction: column; gap: 4px; }
+/* 双列紧凑布局：工具多了以后单列会把下面的面板挤出屏幕 */
+.tool-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .tool-list button {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 5px;
   width: 100%; text-align: left;
-  padding: 6px 8px;
+  padding: 5px 6px;
   background: #2b2b2d;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
 }
-.tool-list button i { font-style: normal; width: 16px; text-align: center; }
-.tool-list button kbd {
-  margin-left: auto; font-size: 10px; color: var(--text-dim);
-  border: 1px solid #454548; border-radius: 3px; padding: 0 4px;
-  font-family: inherit;
-}
+.tool-list button i { font-style: normal; width: 14px; flex-shrink: 0; text-align: center; }
+.tool-list button kbd { display: none; }
 .tool-list button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .tool-list button.active kbd { color: rgba(255,255,255,0.8); border-color: rgba(255,255,255,0.4); }
 
@@ -666,3 +666,40 @@ button.active { background: var(--accent); border-color: var(--accent); color: #
 .opt-group.hidden { display: none !important; }
 #opt-select-group button,
 #opt-transform-group button { padding: 3px 10px; font-size: 11px; }
+
+/* ---------- 笔刷动态面板 ---------- */
+.dyn-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: #a9a9b1;
+}
+.dyn-head select { font-size: 10px; padding: 2px 4px; }
+canvas.curve-editor {
+  width: 100%; height: auto;
+  display: block;
+  border: 1px solid var(--panel-border);
+  border-radius: 5px;
+  cursor: crosshair;
+  touch-action: none;
+  margin-bottom: 7px;
+}
+.dyn-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.dyn-slider {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: #b9b9c0;
+  margin-top: 6px;
+}
+.dyn-slider input[type="range"] { flex: 1; }
+.dyn-slider .val { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: #8f8f98; }
+
+/* 属性栏里的 checkbox / hint */
+.opt-check { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #b9b9c0; cursor: pointer; }
+.opt-check input { width: auto; }
+.opt-hint { font-size: 10px; color: #8f8f98; }
+.opt select { font-size: 11px; padding: 2px 4px; }
+
+/* 动态面板滑块标签不换行（窄列里会竖排） */
+.dyn-slider { white-space: nowrap; }
+.dyn-slider input[type="range"] { min-width: 46px; }
+.dyn-head { white-space: nowrap; }
