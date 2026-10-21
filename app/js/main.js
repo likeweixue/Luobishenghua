@@ -517,7 +517,10 @@ layerOpacityInput.addEventListener('input', () => {
   engine.render();
 });
 
-layers.onChange = () => renderLayerPanel();
+layers.onChange = () => {
+  engine.invalidateCompositeCaches();
+  renderLayerPanel();
+};
 
 /* ---------------- 历史面板 ---------------- */
 
@@ -1089,6 +1092,50 @@ function getPressure(e) {
   return 0.5;
 }
 
+/* ---------------- 笔画渲染调度（脏矩形 + rAF 合并） ---------------- */
+
+let dirtyRect = null;
+let rafId = 0;
+
+function unionRect(a, b) {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  const r = Math.max(a.x + a.w, b.x + b.w);
+  const bt = Math.max(a.y + a.h, b.y + b.h);
+  return { x, y, w: r - x, h: bt - y };
+}
+
+function markDabDirty(x, y, size) {
+  const pad = size / 2 + 4;
+  const r = { x: x - pad, y: y - pad, w: pad * 2, h: pad * 2 };
+  dirtyRect = dirtyRect ? unionRect(dirtyRect, r) : r;
+}
+
+function paintDirty() {
+  const r = dirtyRect;
+  dirtyRect = null;
+  if (!r) return;
+  // 脏区超过画布一半就整屏重绘（有上下层缓存，也不贵）
+  if (r.w * r.h > layers.w * layers.h * 0.5) engine.render();
+  else engine.renderDirty(r);
+}
+
+function scheduleStrokeRender() {
+  if (rafId) return;
+  rafId = requestAnimationFrame(() => {
+    rafId = 0;
+    paintDirty();
+  });
+}
+
+function flushStrokeRender() {
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
+  paintDirty();
+}
+
 // 有选区时：把笔尖画到固定大小的缓冲上，再用选区蒙版裁掉外部
 const DAB_BUF = 256;
 const dabBuf = document.createElement('canvas');
@@ -1130,6 +1177,7 @@ function stampAt(x, y, pressure) {
   const preset = BrushRegistry.get(type);
   const size = pressureSize(type, state.size, pressure);
   const alpha = pressureAlpha(type, state.opacity, pressure);
+  markDabDirty(x, y, size);
   // 落笔前先为将被覆盖的瓦片保存 before 像素（增量撤销）
   if (state.journal) state.journal.captureBefore(x, y, size / 2 + 2);
 
@@ -1168,7 +1216,7 @@ function beginStroke(e) {
   state.smoothPoint = { x: p.x, y: p.y };
   state.spacingLeft = 0;
   stampAt(p.x, p.y, pressure);
-  engine.render();
+  scheduleStrokeRender();
   return true;
 }
 
@@ -1214,7 +1262,7 @@ function continueStroke(e) {
     document.getElementById('status-pressure').textContent =
       `压感: ${Math.round(pressure * 100)}%` + (ev.pointerType === 'pen' ? ' (数位笔)' : ' (鼠标/触控板)');
   }
-  engine.render();
+  scheduleStrokeRender();
 }
 
 /* ---------------- 指针事件 ---------------- */
@@ -1600,6 +1648,7 @@ function endPointer(e) {
     state.drawing = false;
     state.last = null;
     state.smoothPoint = null;
+    flushStrokeRender();
     const act = layers.active;
     if (act && act.type === 'layer' && state.strokeTarget === 'layer' && act.lockAlpha) {
       act.ctx.restore();  // 解除 source-atop

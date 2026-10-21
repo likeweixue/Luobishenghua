@@ -31,7 +31,8 @@ export class Engine {
     const sin = Math.sin(v.rotation);
     v.tx = cx - (wx * cos - wy * sin) * v.scale;
     v.ty = cy - (wx * sin + wy * cos) * v.scale;
-    this.render();
+    this._paperDirty = true;
+    this.renderViewOnly();
   }
 
   resize() {
@@ -40,7 +41,8 @@ export class Engine {
     this.dpr = window.devicePixelRatio || 1;
     this.canvas.width = Math.round(w * this.dpr);
     this.canvas.height = Math.round(h * this.dpr);
-    this.render();
+    this._paperDirty = true;
+    this.renderViewOnly();
   }
 
   fit() {
@@ -51,7 +53,8 @@ export class Engine {
     this.view.rotation = 0;
     this.view.tx = (w - this.docW * s) / 2;
     this.view.ty = (h - this.docH * s) / 2;
-    this.render();
+    this._paperDirty = true;
+    this.renderViewOnly();
   }
 
   screenToWorld(sx, sy) {
@@ -74,7 +77,8 @@ export class Engine {
     const sin = Math.sin(v.rotation);
     v.tx = sx - (before.x * cos - before.y * sin) * v.scale;
     v.ty = sy - (before.x * sin + before.y * cos) * v.scale;
-    this.render();
+    this._paperDirty = true;
+    this.renderViewOnly();
   }
 
   rotateBy(angle) {
@@ -90,51 +94,218 @@ export class Engine {
     const sin = Math.sin(v.rotation);
     v.tx = cx - (before.x * cos - before.y * sin) * v.scale;
     v.ty = cy - (before.x * sin + before.y * cos) * v.scale;
-    this.render();
+    this._paperDirty = true;
+    this.renderViewOnly();
   }
 
   panBy(dx, dy) {
     this.view.tx += dx;
     this.view.ty += dy;
-    this.render();
+    this._paperDirty = true;
+    this.renderViewOnly();
   }
 
-  render() {
-    const ctx = this.ctx;
+  /* ---------------- 渲染管线（性能优化） ----------------
+     1) 静态纸面（工作区 + 阴影 + 白纸）缓存为屏幕大小位图，视图不变时只 blit
+     2) 图层合成拆成「下方缓存 + 激活层 + 上方缓存」，笔画只重合成脏矩形
+     3) render(rect) 只重绘脏区，避免每帧全量重绘
+  */
+
+  invalidatePaper() { this._paperDirty = true; }
+
+  invalidateCompositeCaches() {
+    this._caches = null;
+    this._docValid = false;
+  }
+
+  _applyView(ctx) {
     const v = this.view;
-
-    // 多图层模式下先把图层栈合成到显示缓冲（带棋盘格衬底标示透明区）
-    if (this.layers) {
-      this.layers.composite(this.dctx, { checkerboard: true });
-    }
-
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    // 工作区底色：PS 式深灰（面板间隙透出的也是深灰，不会出现白缝）
-    ctx.fillStyle = '#1e1e1e';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.translate(v.tx, v.ty);
     ctx.rotate(v.rotation);
     ctx.scale(v.scale, v.scale);
+  }
 
-    // 文档投影边（深色工作区下需要更重的投影才看得出层次）
+  _buildPaper() {
+    const c = this.canvas;
+    if (!this._paper) this._paper = document.createElement('canvas');
+    if (this._paper.width !== c.width || this._paper.height !== c.height) {
+      this._paper.width = c.width;
+      this._paper.height = c.height;
+    }
+    const p = this._paper.getContext('2d');
+    p.setTransform(1, 0, 0, 1, 0, 0);
+    p.fillStyle = '#1e1e1e';
+    p.fillRect(0, 0, this._paper.width, this._paper.height);
+
+    const v = this.view;
+    p.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    p.translate(v.tx, v.ty);
+    p.rotate(v.rotation);
+    p.scale(v.scale, v.scale);
+
+    p.save();
+    p.shadowColor = 'rgba(0,0,0,0.55)';
+    p.shadowBlur = 28 / v.scale;
+    p.shadowOffsetY = 2 / v.scale;
+    p.fillStyle = '#ffffff';
+    p.fillRect(0, 0, this.docW, this.docH);
+    p.restore();
+
+    p.strokeStyle = 'rgba(255,255,255,0.14)';
+    p.lineWidth = 1 / v.scale;
+    p.strokeRect(0, 0, this.docW, this.docH);
+
+    this._paperDirty = false;
+  }
+
+  // 激活层在根层且不是剪贴层时，缓存「下方」和「上方」的合成结果
+  _ensureCaches() {
+    const layers = this.layers;
+    if (!layers) return null;
+    const loc = layers.locate(layers.activeId);
+    if (!loc || loc.array !== layers.layers) return null;
+    const node = layers.layers[loc.index];
+    if (!node || node.type !== 'layer' || node.clipping) return null;
+    if (this._caches
+      && this._caches.activeId === node.id
+      && this._caches.w === layers.w
+      && this._caches.h === layers.h) {
+      return this._caches;
+    }
+    const mk = () => {
+      const c = document.createElement('canvas');
+      c.width = layers.w;
+      c.height = layers.h;
+      return c;
+    };
+    const below = mk();
+    const above = mk();
+    layers._renderNodes(layers.layers.slice(0, loc.index), below.getContext('2d'), 0);
+    layers._renderNodes(layers.layers.slice(loc.index + 1), above.getContext('2d'), 0);
+    this._caches = { below, above, activeId: node.id, w: layers.w, h: layers.h };
+    return this._caches;
+  }
+
+  _compositeDoc() {
+    if (!this.layers) return;
+    const dctx = this.dctx;
+    const caches = this._ensureCaches();
+    if (!caches) {
+      this.layers.composite(dctx, { checkerboard: true });
+      return;
+    }
+    const node = this.layers.byId(caches.activeId);
+    dctx.setTransform(1, 0, 0, 1, 0, 0);
+    dctx.globalAlpha = 1;
+    dctx.globalCompositeOperation = 'source-over';
+    dctx.clearRect(0, 0, this.layers.w, this.layers.h);
+    dctx.fillStyle = this.layers._checkerPattern(dctx);
+    dctx.fillRect(0, 0, this.layers.w, this.layers.h);
+    dctx.drawImage(caches.below, 0, 0);
+    if (node && node.visible) {
+      const content = this.layers._contentOf(node);
+      this.layers._draw(dctx, content, node);
+    }
+    dctx.drawImage(caches.above, 0, 0);
+  }
+
+  _compositeDocRegion(rect) {
+    if (!this.layers) return;
+    const dctx = this.dctx;
+    const caches = this._ensureCaches();
+    if (!caches) { this.layers.composite(dctx, { checkerboard: true }); return; }
+    const x = Math.max(0, Math.floor(rect.x));
+    const y = Math.max(0, Math.floor(rect.y));
+    const w = Math.min(this.layers.w - x, Math.ceil(rect.w) + 1);
+    const h = Math.min(this.layers.h - y, Math.ceil(rect.h) + 1);
+    if (w <= 0 || h <= 0) return;
+
+    dctx.save();
+    dctx.beginPath();
+    dctx.rect(x, y, w, h);
+    dctx.clip();
+    dctx.globalAlpha = 1;
+    dctx.globalCompositeOperation = 'source-over';
+    dctx.clearRect(x, y, w, h);
+    dctx.fillStyle = this.layers._checkerPattern(dctx);
+    dctx.fillRect(x, y, w, h);
+    dctx.drawImage(caches.below, x, y, w, h, x, y, w, h);
+    const node = this.layers.byId(caches.activeId);
+    if (node && node.visible) {
+      const content = this.layers._contentOf(node);
+      dctx.save();
+      dctx.globalAlpha = node.opacity;
+      dctx.globalCompositeOperation = node.blend || 'source-over';
+      dctx.drawImage(content, x, y, w, h, x, y, w, h);
+      dctx.restore();
+    }
+    dctx.drawImage(caches.above, x, y, w, h, x, y, w, h);
+    dctx.restore();
+  }
+
+  // 世界矩形 → 屏幕包围盒（CSS px）
+  _worldRectToScreen(rect) {
+    const v = this.view;
+    const cos = Math.cos(v.rotation);
+    const sin = Math.sin(v.rotation);
+    const pts = [
+      [rect.x, rect.y], [rect.x + rect.w, rect.y],
+      [rect.x, rect.y + rect.h], [rect.x + rect.w, rect.y + rect.h],
+    ];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [wx, wy] of pts) {
+      const sx = (wx * cos - wy * sin) * v.scale + v.tx;
+      const sy = (wx * sin + wy * cos) * v.scale + v.ty;
+      if (sx < minX) minX = sx;
+      if (sx > maxX) maxX = sx;
+      if (sy < minY) minY = sy;
+      if (sy > maxY) maxY = sy;
+    }
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+
+  _paintScreen(clip) {
+    const ctx = this.ctx;
+    if (!this.canvas.width || !this.canvas.height) return;
     ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.55)';
-    ctx.shadowBlur = 28 / v.scale;
-    ctx.shadowOffsetY = 2 / v.scale;
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, this.docW, this.docH);
-    ctx.restore();
-
+    if (clip) {
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      ctx.beginPath();
+      ctx.rect(clip.x - 2, clip.y - 2, clip.w + 4, clip.h + 4);
+      ctx.clip();
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(this._paper, 0, 0);
+    this._applyView(ctx);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(this.doc, 0, 0);
+    ctx.restore();
+  }
 
-    // 文档边框（深色背景上用浅描边勾出纸张边界）
-    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
-    ctx.lineWidth = 1 / v.scale;
-    ctx.strokeRect(0, 0, this.docW, this.docH);
+  /**
+   * 渲染。传入 rect（世界坐标）时只更新脏区。
+   */
+  render(rect = null) {
+    if (!this.canvas.width || !this.canvas.height) {
+      if (this.onRender) this.onRender();
+      return;
+    }
+    const paperWasDirty = this._paperDirty || !this._paper;
+    if (paperWasDirty) this._buildPaper();
+
+    if (rect) this._compositeDocRegion(rect);
+    else this._compositeDoc();
+    this._docValid = true;
+
+    const clip = rect && !paperWasDirty ? this._worldRectToScreen(rect) : null;
+    this._paintScreen(clip);
+
+    const ctx = this.ctx;
+    const v = this.view;
+    ctx.save();
+    this._applyView(ctx);
 
     // 浮动变换层（图层上已挖空，这里补画预览）
     if (this.transform) this.transform.render(ctx, v);
@@ -153,7 +324,52 @@ export class Engine {
       ctx.restore();
     }
 
+    ctx.restore();
     if (this.onRender) this.onRender();
+  }
+
+  // 只重绘屏幕（不重新合成图层）：平移/缩放/旋转时用
+  renderViewOnly() {
+    if (!this.canvas.width || !this.canvas.height) {
+      if (this.onRender) this.onRender();
+      return;
+    }
+    if (!this._docValid) {
+      this._compositeDoc();
+      this._docValid = true;
+    }
+    if (this._paperDirty || !this._paper) this._buildPaper();
+    this._paintScreen(null);
+    this._paintOverlays();
+    if (this.onRender) this.onRender();
+  }
+
+  _paintOverlays() {
+    const ctx = this.ctx;
+    const v = this.view;
+    ctx.save();
+    this._applyView(ctx);
+
+    if (this.transform) this.transform.render(ctx, v);
+    if (this.selection) this._drawSelection(ctx, v);
+
+    if (this.previewPath) {
+      ctx.save();
+      ctx.lineWidth = 1 / v.scale;
+      ctx.setLineDash([4 / v.scale, 4 / v.scale]);
+      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+      ctx.stroke(this.previewPath);
+      ctx.lineDashOffset = -4 / v.scale;
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.stroke(this.previewPath);
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  renderDirty(rect) {
+    this.render(rect);
   }
 
   _drawSelection(ctx, v) {
@@ -187,6 +403,9 @@ export class Engine {
     this.docH = h;
     this.doc.width = w;
     this.doc.height = h;
+    this._paperDirty = true;
+    this._caches = null;
+    this._docValid = false;
   }
 
   // 导出 PNG：合成所有图层（无棋盘格，保留真实透明通道）
