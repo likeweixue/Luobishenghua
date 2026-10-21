@@ -205,8 +205,8 @@ export class Engine {
     dctx.fillRect(0, 0, this.layers.w, this.layers.h);
     dctx.drawImage(caches.below, 0, 0);
     if (node && node.visible) {
-      const content = this.layers._contentOf(node);
-      this.layers._draw(dctx, content, node);
+      // 直接按瓦片画激活层（含蒙版 / 不透明度 / 混合模式）
+      this.layers._drawNodeContent(dctx, node, 0);
     }
     dctx.drawImage(caches.above, 0, 0);
   }
@@ -234,12 +234,8 @@ export class Engine {
     dctx.drawImage(caches.below, x, y, w, h, x, y, w, h);
     const node = this.layers.byId(caches.activeId);
     if (node && node.visible) {
-      const content = this.layers._contentOf(node);
-      dctx.save();
-      dctx.globalAlpha = node.opacity;
-      dctx.globalCompositeOperation = node.blend || 'source-over';
-      dctx.drawImage(content, x, y, w, h, x, y, w, h);
-      dctx.restore();
+      // 已在脏区上做了 clip，这里直接画整层即可
+      this.layers._drawNodeContent(dctx, node, 0);
     }
     dctx.drawImage(caches.above, x, y, w, h, x, y, w, h);
     dctx.restore();

@@ -16,10 +16,23 @@ const check = (cond, label, extra = '') => {
   else { fail++; out.push('❌ ' + label + (extra ? ' — ' + extra : '')); }
 };
 
-function px(ctxOrLayer, x, y) {
-  const ctx = ctxOrLayer.ctx || ctxOrLayer.getContext?.('2d') || ctxOrLayer;
+function px(target, x, y) {
+  if (target && target.surface) return target.surface.pixelAt(x, y);
+  const ctx = (target && target.ctx)
+    || (typeof target.getImageData === 'function' ? target : target.getContext('2d'));
   const d = ctx.getImageData(x, y, 1, 1).data;
   return [d[0], d[1], d[2], d[3]];
+}
+
+// 往瓦片图层上画一块纯色
+function paintLayer(layer, color, x, y, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const cc = c.getContext('2d');
+  cc.fillStyle = color;
+  cc.fillRect(0, 0, w, h);
+  layer.surface.putCanvas(c, x, y);
 }
 
 function compPx(stack, x, y) {
@@ -40,13 +53,11 @@ async function run() {
   const s = new LayerStack(200, 150);
   const base = s.active;
   base.name = '底色';
-  base.ctx.fillStyle = '#e24b4a';
-  base.ctx.fillRect(10, 10, 40, 40);
+  paintLayer(base, '#e24b4a', 10, 10, 40, 40);
 
   const clip = s.addLayer();
   clip.name = '剪贴层';
-  clip.ctx.fillStyle = '#1d9e75';
-  clip.ctx.fillRect(0, 0, 200, 150);
+  paintLayer(clip, '#1d9e75', 0, 0, 200, 150);
   s.toggleClipping(clip.id);
 
   let p = compPx(s, 25, 25);
@@ -84,8 +95,7 @@ async function run() {
   g.name = '组 A';
   const inner = s.addLayer();
   inner.name = '组内层';
-  inner.ctx.fillStyle = '#378add';
-  inner.ctx.fillRect(120, 20, 30, 30);
+  paintLayer(inner, '#378add', 120, 20, 30, 30);
 
   check(s.flatTopFirst().some(it => it.node === g && it.depth === 0), '组在根层（depth 0）');
   check(s.flatTopFirst().some(it => it.node === inner && it.depth === 1), '组内图层缩进 depth 1');
@@ -129,12 +139,10 @@ async function run() {
   const mPaper = ms.layers[0];
   const bottom = ms.active;
   bottom.name = '底';
-  bottom.ctx.fillStyle = '#e24b4a';
-  bottom.ctx.fillRect(0, 0, 50, 50);
+  paintLayer(bottom, '#e24b4a', 0, 0, 50, 50);
   const top = ms.addLayer();
   top.name = '上';
-  top.ctx.fillStyle = '#378add';
-  top.ctx.fillRect(0, 0, 25, 50);
+  paintLayer(top, '#378add', 0, 0, 25, 50);
   const okMerge = ms.mergeDown(top.id);
   check(okMerge === true, '向下合并成功');
   check(ms.layers.length === 2, '合并后只剩纸张 + 1 层', ms.layers.length + '');
@@ -147,8 +155,7 @@ async function run() {
   ps.layers[0].name = '纸张';
   const a = ps.active;
   a.name = '底色';
-  a.ctx.fillStyle = '#e24b4a';
-  a.ctx.fillRect(5, 5, 30, 30);
+  paintLayer(a, '#e24b4a', 5, 5, 30, 30);
   ps.addMask(a.id);
   a.mask.ctx.globalCompositeOperation = 'destination-out';
   a.mask.ctx.fillRect(20, 0, 44, 64);
@@ -156,16 +163,14 @@ async function run() {
 
   const b = ps.addLayer();
   b.name = '剪贴层';
-  b.ctx.fillStyle = '#378add';
-  b.ctx.fillRect(0, 0, 64, 64);
+  paintLayer(b, '#378add', 0, 0, 64, 64);
   ps.toggleClipping(b.id);
 
   const pg = ps.addGroup();
   pg.name = '组 A';
   const pc = ps.addLayer();
   pc.name = '组内层';
-  pc.ctx.fillStyle = '#1d9e75';
-  pc.ctx.fillRect(40, 40, 20, 20);
+  paintLayer(pc, '#1d9e75', 40, 40, 20, 20);
 
   const flat = document.createElement('canvas');
   flat.width = 64; flat.height = 64;

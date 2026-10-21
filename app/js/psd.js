@@ -412,7 +412,8 @@ export function writePSD({ width, height, nodes, layers, compositeImage }) {
   for (const rec of recs) {
     if (rec.kind !== 'layer') continue;
     const n = rec.node;
-    const img = n.canvas.getContext('2d').getImageData(0, 0, w, h);
+    // 瓦片拼成整层的 ImageData（写完随局部变量释放）
+    const img = n.surface ? n.surface.toImageData() : n.canvas.getContext('2d').getImageData(0, 0, w, h);
     const planes = splitPlanes(img);
     rec.chans = [
       { id: 0, enc: encodeChannelRLE(planes[0], w, h) },

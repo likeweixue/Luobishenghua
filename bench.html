@@ -15,26 +15,43 @@ import { drawDab } from './app/js/brushes.js';
 const out = [];
 const log = (s) => { out.push(s); document.getElementById('out').textContent = out.join('\n'); };
 const fmt = (n) => n.toFixed(2);
+const mb = (b) => (b / 1024 / 1024).toFixed(0) + ' MB';
 
 const cv = document.getElementById('cv');
 const engine = new Engine(cv, 1600, 1600);
 engine.resize();
 
-function makeStack(w, h, n) {
+// 整层铺色（模拟“每层都有内容”的最坏情况）
+function wash(nd, color, alpha) {
+  const s = nd.surface;
+  for (let ty = 0; ty < s.rows; ty++) {
+    for (let tx = 0; tx < s.cols; tx++) {
+      const t = s.getTile(tx, ty, true);
+      t.ctx.globalAlpha = alpha;
+      t.ctx.fillStyle = color;
+      t.ctx.fillRect(0, 0, t.canvas.width, t.canvas.height);
+    }
+  }
+}
+
+// 局部画一块（模拟真实图层：只有画过的地方有像素）
+function block(nd, color, x, y, w, h) {
+  nd.surface.stamp(x + w / 2, y + h / 2, Math.max(w, h) / 2 + 2, (ctx) => {
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, w, h);
+  });
+}
+
+function makeStack(w, h, n, dense) {
   const s = new LayerStack(w, h);
-  // 已有纸张 + 图层1
   for (let i = 1; i < n; i++) s.addLayer();
-  // 给每层一些内容，避免全空画布被浏览器优化
   let i = 0;
   const walk = (nodes) => nodes.forEach(nd => {
     if (nd.type === 'group') return walk(nd.children);
     i++;
-    nd.ctx.fillStyle = `hsl(${(i * 37) % 360},60%,50%)`;
-    nd.ctx.globalAlpha = 0.15;
-    nd.ctx.fillRect(0, 0, w, h);
-    nd.ctx.globalAlpha = 1;
-    nd.ctx.fillStyle = '#222';
-    nd.ctx.fillRect(20 + i * 5, 20 + i * 3, 300, 200);
+    const color = `hsl(${(i * 37) % 360},60%,50%)`;
+    if (dense) wash(nd, color, 0.12);
+    block(nd, dense ? '#222' : color, 20 + (i * 37) % (w - 320), 20 + (i * 53) % (h - 220), 300, 200);
   });
   walk(s.layers);
   return s;
@@ -46,10 +63,11 @@ function setView(w, h) {
   engine.view.rotation = 0;
   engine.view.tx = (cv.width - w * s) / 2;
   engine.view.ty = (cv.height - h * s) / 2;
+  engine._paperDirty = true;
 }
 
 function benchFullRender(times = 4) {
-  engine.render(); // 预热
+  engine.render();
   const t = [];
   for (let i = 0; i < times; i++) {
     const t0 = performance.now();
@@ -57,7 +75,7 @@ function benchFullRender(times = 4) {
     t.push(performance.now() - t0);
   }
   t.sort((a, b) => a - b);
-  return { avg: t.reduce((a, b) => a + b, 0) / t.length, p95: t[Math.floor(t.length * 0.95) - 1] ?? t[t.length - 1], max: t[t.length - 1] };
+  return { avg: t.reduce((a, b) => a + b, 0) / t.length, p95: t[Math.floor(t.length * 0.95) - 1] ?? t[t.length - 1] };
 }
 
 function benchView(times = 6) {
@@ -83,8 +101,7 @@ function benchStroke(stack, frames = 12) {
     const y = 400 + Math.sin(k) * 120;
     const t0 = performance.now();
     j.captureBefore(x, y, 14);
-    drawDab(layer.ctx, 'hard', '#222222', x, y, 26, 1, 0);
-    // 走脏矩形渲染（与主程序笔画路径一致）
+    layer.surface.stamp(x, y, 14, (ctx) => drawDab(ctx, 'hard', '#222222', x, y, 26, 1, 0));
     engine.renderDirty({ x: x - 16, y: y - 16, w: 32, h: 32 });
     t.push(performance.now() - t0);
   }
@@ -93,51 +110,52 @@ function benchStroke(stack, frames = 12) {
   return {
     avg: t.reduce((a, b) => a + b, 0) / t.length,
     p95: t[Math.floor(t.length * 0.95) - 1] ?? t[t.length - 1],
-    max: t[t.length - 1],
+    histKB: Math.round(hist.memoryBytes() / 1024),
   };
 }
 
 async function run() {
+  // dense = 每层整层铺色（最坏情况）；否则只在局部画一块（接近真实图层）
   const cases = [
-    { w: 1024, h: 1024, layers: 20 },
-    { w: 1024, h: 1024, layers: 50 },
-    { w: 1600, h: 1600, layers: 50 },
-    { w: 2048, h: 2048, layers: 20 },
-    { w: 2048, h: 2048, layers: 50 },
-    { w: 4000, h: 4000, layers: 10 },
+    { w: 1024, h: 1024, layers: 50, dense: true },
+    { w: 1600, h: 1600, layers: 50, dense: true },
+    { w: 2048, h: 2048, layers: 50, dense: true },
+    { w: 4000, h: 4000, layers: 20, dense: false },
+    { w: 4000, h: 4000, layers: 50, dense: false },
   ];
 
-  log('尺寸        图层   内存估算   整屏合成(avg/p95)   视图重绘(avg/p95)   笔画帧(avg/p95)');
-  log('─'.repeat(88));
+  log('尺寸         图层  像素内存(实测)  瓦片数  整屏合成(avg/p95)  视图重绘(avg/p95)  笔画帧(avg/p95)  撤销KB');
+  log('─'.repeat(112));
 
   for (const c of cases) {
-    const mem = (c.w * c.h * 4 * (c.layers + 1)) / 1024 / 1024;
+    const theoretical = (c.w * c.h * 4 * (c.layers + 1)) / 1024 / 1024;
     try {
-      const stack = makeStack(c.w, c.h, c.layers);
+      const stack = makeStack(c.w, c.h, c.layers, c.dense);
       engine.layers = stack;
       engine.setDocSize(c.w, c.h);
       setView(c.w, c.h);
       const r = benchFullRender();
       const vw = benchView();
       const s = benchStroke(stack);
+      const realBytes = stack.pixelBytes();
       log(
         `${c.w}×${c.h}`.padEnd(13) +
-        String(c.layers).padEnd(7) +
-        `${mem.toFixed(0)} MB`.padEnd(11) +
-        `${fmt(r.avg)} / ${fmt(r.p95)}`.padEnd(21) +
-        `${fmt(vw.avg)} / ${fmt(vw.p95)}`.padEnd(21) +
-        `${fmt(s.avg)} / ${fmt(s.p95)}`
+        String(c.layers).padEnd(6) +
+        `${mb(realBytes)}`.padEnd(16) +
+        String(stack.tileCount()).padEnd(8) +
+        `${fmt(r.avg)} / ${fmt(r.p95)}`.padEnd(20) +
+        `${fmt(vw.avg)} / ${fmt(vw.p95)}`.padEnd(20) +
+        `${fmt(s.avg)} / ${fmt(s.p95)}`.padEnd(18) +
+        String(s.histKB)
       );
-      // 释放画布内存
+      log(`               └ 整层画布方案需要 ${theoretical.toFixed(0)} MB，瓦片实际 ${mb(realBytes)}`);
+
+      // 释放
       engine.layers = null;
       engine._caches = null;
       engine._paper = null;
-      const free = (nodes) => nodes.forEach(nd => {
-        if (nd.type === 'group') return free(nd.children);
-        if (nd.canvas) { nd.canvas.width = 0; nd.canvas.height = 0; }
-        if (nd.mask) { nd.mask.canvas.width = 0; nd.mask.canvas.height = 0; }
-      });
-      free(stack.layers);
+      engine._docValid = false;
+      for (const nd of stack.leaves()) nd.surface.clearAll();
       stack.layers.length = 0;
       await new Promise(r => setTimeout(r, 120));
     } catch (err) {
@@ -147,7 +165,8 @@ async function run() {
   }
 
   log('');
-  log('说明：整屏合成 = 图层变化后的全量合成；视图重绘 = 平移/缩放（不重新合成图层）；笔画帧 = 单个笔尖（历史瓦片快照 + 脏矩形渲染）。');
+  log('说明：dense 组每层整层铺色（最坏情况）；4000² 组只在局部画一块（真实图层常见形态）。');
+  log('整屏合成 = 图层变化后的全量合成；视图重绘 = 平移/缩放（不重新合成）；笔画帧 = 单笔尖（瓦片快照 + 脏矩形渲染）。');
   document.title = 'BENCH DONE';
 }
 

@@ -2,6 +2,58 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta10（2026-10-22）
+
+瓦片（tile）存储重构：图层像素不再是一张全尺寸画布，而是按需分配的 256×256 瓦片。
+
+为什么：4000×4000 的一层整画布 = 64MB，50 层 = 3.2GB，浏览器直接崩。瓦片化后只
+有真正画过的区域占内存，空白层 0 开销。
+
+新增 `app/js/tiles.js`（TileSurface）：
+- `getTile/forEachTileInRect/stamp`：在瓦片上按世界坐标绘制（内部自动 translate）
+- `drawInto/drawIntoRegion/drawCanvas`：把瓦片画到目标 / 按块绘制外部画布（支持 alpha 与合成模式）
+- `extract/putCanvas/toCanvas/toImageData/fromCanvas`：区域取用与整层互转（fromCanvas 逐瓦片扫 alpha，全透明的跳过）
+- `clearRect/clearAll/fill`、`bbox/byteSize/tileCount/pixelAt/colorAt`
+- `snapshotTiles/restoreTiles/snapshotAll/restoreAll`：历史快照（不存在的瓦片也记，还原时删除）
+
+接入改造：
+- 图层：`layer.canvas/ctx` → `layer.surface`；合成改为按瓦片直接画（无蒙版时不再需要整层缓冲）；
+  剪贴基底改为**惰性物化**（只有真的遇到剪贴层才生成基底画布）
+- 历史：笔画 = 瓦片 before/after 快照；整层操作（填充/渐变/变换/清空）= 整层瓦片快照，只存存在的瓦片
+- 变换：提层时从瓦片 `extract` 区域，取消用快照还原，提交 `putCanvas` 写回
+- 油漆桶 / 渐变：临时拼整层 → 计算 → `fromCanvas` 回写（一次性开销，低频操作）
+- 涂抹：`drawIntoRegion` 采样 + `drawCanvas` 落色，只碰 1–4 个瓦片
+- 吸管：当前图层直接读瓦片像素
+- 工程 .lbsh / PSD 导出：瓦片拼成整层再编码
+- 状态栏新增「瓦片数 · 像素内存」实时显示
+
+实测（bench.html，headless Chrome 软件光栅）：
+
+| 场景 | 整层画布方案 | 瓦片实际 | 笔画帧(avg/p95) |
+|---|---|---|---|
+| 1024² × 50 层（每层铺满） | 204 MB | 204 MB | 1.67 / 1.70 ms |
+| 1600² × 50 层（每层铺满） | 498 MB | 498 MB | 5.58 / 5.00 ms |
+| 2048² × 50 层（每层铺满） | 816 MB | 816 MB | 5.52 / 5.10 ms |
+| 4000² × 20 层（局部内容） | 1282 MB | **86 MB** | 5.33 / 6.10 ms |
+| 4000² × 50 层（局部内容） | 3113 MB | **122 MB** | 4.86 / 5.40 ms |
+
+4000²×50 层从「内存爆掉跑不起来」变成 122MB 可用，笔画帧 ~5ms，远在 20ms 目标内。
+铺满内容的层仍然等于整层大小（数据本身就是那么多），这是信息量下限，不是浪费。
+
+修复：
+- **`drawCanvas` 双重偏移**：瓦片上下文已平移到世界坐标，目标坐标又减了一次瓦片原点，
+  导致非 (0,0) 瓦片的内容画到画布外（新写的 test-tiles 抓到的，靠肉眼截图才暴露）
+- 锁定透明像素在新的落章路径下失效（`source-atop` 只加在了选区分支）
+
+测试：`test-tiles.html` 46 项（跨瓦片写入、负偏移、extract/drawInto、clearRect 释放瓦片、
+快照还原含删除、fromCanvas 稀疏化、边缘瓦片裁剪…）、n1 28、n2 34、n3 30、n5 41、
+主程序集成 15 + 18、PSD/ABR/ZIP 解析器全过。
+
+已知限制：
+- 蒙版仍是整层画布（默认全显示需要连续数据；有蒙版的层不多）
+- PSD 导入仍会为每层先建一张整层画布（读取阶段峰值），导入后按瓦片稀疏化
+- 合成/导出仍是 CPU 光栅，没上 WebGL
+
 ## beta9（2026-10-21）
 
 N5 工具补齐：涂抹、油漆桶、渐变、吸管 + 笔刷动态（压感曲线 / 倾斜 / 间距 / 散布）。

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>TILES TEST</title></head>
+<body>
+<pre id="out">running…</pre>
+<script type="module">
+import { TileSurface, TILE_SIZE } from './app/js/tiles.js';
+
+const out = [];
+let pass = 0, fail = 0;
+const check = (c, label, extra = '') => {
+  if (c) { pass++; out.push('✅ ' + label); }
+  else { fail++; out.push('❌ ' + label + (extra ? ' — ' + extra : '')); }
+};
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+const solid = (w, h, color) => {
+  const c = mk(w, h);
+  const cc = c.getContext('2d');
+  cc.fillStyle = color;
+  cc.fillRect(0, 0, w, h);
+  return c;
+};
+const isColor = (p, r, g, b, a = 255) =>
+  Math.abs(p[0] - r) < 6 && Math.abs(p[1] - g) < 6 && Math.abs(p[2] - b) < 6 && Math.abs(p[3] - a) < 6;
+
+const RED = [226, 75, 74], GREEN = [29, 158, 117], BLUE = [55, 138, 221];
+
+try {
+  check(TILE_SIZE === 256, '瓦片边长 256');
+
+  /* ================= 1. 基础写入 / 读取 ================= */
+  const s = new TileSurface(800, 600);
+  check(s.cols === 4 && s.rows === 3, '瓦片网格 4×3', `${s.cols}×${s.rows}`);
+  check(s.isEmpty(), '新建为空');
+
+  s.putCanvas(solid(100, 80, '#e24b4a'), 400, 250);
+  check(s.tileCount === 2, '跨 2 个瓦片（x=400 在 tx1，y 跨 0/1）', s.tileCount);
+  check(isColor(s.pixelAt(410, 260), ...RED), '瓦片 (1,1) 内像素正确', s.pixelAt(410, 260) + '');
+  check(isColor(s.pixelAt(490, 320), ...RED), '右下角像素正确', s.pixelAt(490, 320) + '');
+  check(s.pixelAt(405, 249)[3] === 0, '区域外透明（上边界外 y=249）', s.pixelAt(405, 249) + '');
+
+  /* ================= 2. 内容跨 4 个瓦片 ================= */
+  const s2 = new TileSurface(800, 600);
+  s2.putCanvas(solid(300, 300, '#1d9e75'), 200, 200);   // 200..500 / 200..500 → 跨 4 块
+  check(s2.tileCount === 4, '300×300 跨 4 个瓦片', s2.tileCount);
+  check(isColor(s2.pixelAt(210, 210), ...GREEN), '左上瓦片像素正确');
+  check(isColor(s2.pixelAt(490, 210), ...GREEN), '右上瓦片像素正确');
+  check(isColor(s2.pixelAt(210, 490), ...GREEN), '左下瓦片像素正确');
+  check(isColor(s2.pixelAt(490, 490), ...GREEN), '右下瓦片像素正确');
+  check(s2.pixelAt(199, 210)[3] === 0 && s2.pixelAt(501, 210)[3] === 0, '区域外左右都透明');
+
+  /* ================= 3. 负偏移（部分在画布外） ================= */
+  const s3 = new TileSurface(400, 400);
+  s3.putCanvas(solid(100, 100, '#378add'), -40, -40);
+  check(s3.pixelAt(0, 0)[3] > 0, '负偏移时左上角有内容', s3.pixelAt(0, 0) + '');
+  check(isColor(s3.pixelAt(30, 30), ...BLUE), '负偏移内容位置正确', s3.pixelAt(30, 30) + '');
+  check(s3.pixelAt(70, 70)[3] === 0, '内容范围外仍透明');
+
+  /* ================= 4. extract / drawIntoRegion ================= */
+  const s4 = new TileSurface(800, 600);
+  s4.putCanvas(solid(300, 200, '#e24b4a'), 250, 250);
+  const ex = s4.extract(300, 300, 100, 100);
+  check(ex.width === 100 && ex.height === 100, 'extract 尺寸正确');
+  const exPx = ex.getContext('2d').getImageData(50, 50, 1, 1).data;
+  check(isColor(Array.from(exPx), ...RED), 'extract 跨瓦片取到完整内容', Array.from(exPx) + '');
+
+  const reg = mk(80, 80);
+  s4.drawIntoRegion(reg.getContext('2d'), 260, 260, 80, 80);
+  check(isColor(Array.from(reg.getContext('2d').getImageData(60, 60, 1, 1).data), ...RED),
+    'drawIntoRegion 位置正确');
+
+  /* ================= 5. 缩略图（带缩放的 drawInto） ================= */
+  const thumb = mk(40, 30);
+  const tctx = thumb.getContext('2d');
+  tctx.save();
+  tctx.scale(40 / 800, 30 / 600);
+  s4.drawInto(tctx);
+  tctx.restore();
+  const tp = tctx.getImageData(20, 17, 1, 1).data;
+  check(tp[3] > 200, 'drawInto 支持缩放到缩略图', Array.from(tp) + '');
+
+  /* ================= 6. clearRect ================= */
+  const s5 = new TileSurface(800, 600);
+  s5.putCanvas(solid(300, 300, '#e24b4a'), 200, 200);
+  const before = s5.tileCount;
+  s5.clearRect(256, 256, 256, 256);          // 正好整块覆盖瓦片 (1,1) → 应释放该瓦片
+  check(s5.tileCount === before - 1, 'clearRect 整块覆盖时释放瓦片', `${before} → ${s5.tileCount}`);
+  check(s5.pixelAt(300, 300)[3] === 0, '被清区域已透明');
+  s5.clearRect(400, 400, 100, 100);          // 部分覆盖 → 只擦像素不删瓦片
+  check(s5.pixelAt(420, 420)[3] === 0, '部分清除已生效');
+  check(s5.pixelAt(210, 210)[3] > 0, '未清区域保留');
+
+  s5.clearRect(0, 0, 800, 600);
+  check(s5.isEmpty(), '整层 clearRect 后没有瓦片');
+
+  /* ================= 7. 快照 / 还原 ================= */
+  const s6 = new TileSurface(600, 400);
+  s6.putCanvas(solid(100, 100, '#1d9e75'), 50, 50);
+  const snap = s6.snapshotTiles(0, 0, 300, 300);      // 覆盖 tile(0,0)、tile(1,0)、tile(0,1)、tile(1,1)
+  check(snap.size === 4, '快照覆盖 4 个瓦片', snap.size);
+  check([...snap.values()].filter(v => v.existed).length === 1, '其中只有 1 个原本存在');
+
+  s6.putCanvas(solid(200, 200, '#378add'), 300, 150);  // 画到原本空白的地方（新增瓦片）
+  const afterTiles = s6.tileCount;
+  check(afterTiles > 1, '写入后在空白处新建瓦片', afterTiles);
+  check(s6.pixelAt(350, 200)[3] > 0, '新内容可见');
+
+  s6.restoreTiles(snap);
+  check(s6.pixelAt(350, 200)[3] === 0, '还原后新增的瓦片被删除');
+  check(s6.pixelAt(60, 60)[3] > 0, '还原后原内容仍在');
+  check(s6.tileCount === 1, '还原后瓦片数回到 1', s6.tileCount);
+
+  const snapAll = s6.snapshotAll();
+  s6.clearAll();
+  check(s6.isEmpty(), 'clearAll 清空');
+  s6.restoreAll(snapAll);
+  check(s6.pixelAt(60, 60)[3] > 0, 'restoreAll 恢复内容');
+
+  /* ================= 8. fromCanvas 稀疏化 ================= */
+  const full = mk(800, 600);   // 只有左上角 50×50 有内容，其余透明
+  const fctx = full.getContext('2d');
+  fctx.fillStyle = '#e24b4a';
+  fctx.fillRect(10, 10, 50, 50);
+  const s7 = new TileSurface(800, 600);
+  s7.fromCanvas(full);
+  check(s7.tileCount === 1, 'fromCanvas 跳过全透明瓦片（只分配 1 块）', s7.tileCount);
+  check(isColor(s7.pixelAt(20, 20), ...RED), 'fromCanvas 内容正确');
+
+  const dense = solid(800, 600, '#1d9e75');
+  const s8 = new TileSurface(800, 600);
+  s8.fromCanvas(dense);
+  check(s8.tileCount === 12, '整层有内容时分配全部 12 块', s8.tileCount);
+
+  /* ================= 9. fill / bbox / 内存 ================= */
+  const s9 = new TileSurface(600, 400);
+  s9.fill('#ffffff');
+  check(s9.tileCount === 6, 'fill 铺满全部瓦片（600×400 → 3×2）', s9.tileCount);
+  check(isColor(s9.pixelAt(599, 399), 255, 255, 255), 'fill 右下角是白色');
+  check(s9.byteSize() === 600 * 400 * 4, 'byteSize 等于整层字节（无浪费）', s9.byteSize());
+  const bb = s9.bbox();
+  check(bb && bb.x === 0 && bb.y === 0 && bb.w === 600 && bb.h === 400, 'bbox 覆盖全层', JSON.stringify(bb));
+
+  /* ================= 10. colorAt 边界 ================= */
+  const s10 = new TileSurface(300, 300);
+  s10.putCanvas(solid(10, 10, '#378add'), 100, 100);
+  check(s10.colorAt(105, 105) === '#378add', 'colorAt 返回十六进制', s10.colorAt(105, 105));
+  check(s10.colorAt(0, 0) === null, 'colorAt 空处返回 null');
+  check(s10.colorAt(-5, 105) === null, 'colorAt 越界返回 null');
+
+  /* ================= 11. 瓦片尺寸在文档边缘被裁剪 ================= */
+  const s11 = new TileSurface(300, 200);   // 第二列只有 44px 宽
+  s11.putCanvas(solid(100, 100, '#e24b4a'), 250, 50);
+  const t2 = s11.tiles.get('1,0');
+  check(t2 && t2.canvas.width === 44, '边缘瓦片宽度被裁到 44', t2 && t2.canvas.width);
+  check(isColor(s11.pixelAt(299, 60), ...RED), '边缘像素可写可读', s11.pixelAt(299, 60) + '');
+
+} catch (err) {
+  out.push('💥 异常：' + (err && err.stack ? err.stack : err));
+  fail++;
+}
+
+document.title = fail === 0 ? 'PASS' : 'FAIL';
+document.getElementById('out').textContent = `瓦片存储测试：${pass} 通过 / ${fail} 失败\n\n` + out.join('\n');
+</script>
+</body>
+</html>

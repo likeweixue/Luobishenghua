@@ -1,9 +1,10 @@
 // 撤销/重做：瓦片级增量（笔画）+ 图层级/整栈级（结构操作）
 //
-// 笔画不再整层快照，而是把画布切成 128×128 瓦片：
-//   落笔时只对「第一次被碰到」的瓦片保存 before 像素，
-//   抬笔时保存同一批瓦片的 after 像素。
-// 内存只与被笔触覆盖的面积成正比；一笔没画到的地方零开销。
+// 图层像素存在 TileSurface（256 瓦片），所以笔画撤销就是「碰到的瓦片存 before/after」，
+// 层级/整栈快照仍是引用式（共享 surface 对象，零拷贝）。
+// 蒙版还是整张画布，沿用 128 瓦片切分。
+
+import { TileSurface } from './tiles.js';
 
 const TILE = 128;
 
@@ -50,6 +51,20 @@ export class StrokeJournal {
 
   // 在画这一笔之前调用：只复制首次碰到的瓦片
   captureBefore(x, y, radius) {
+    const l = this.layers.byId(this.layerId);
+    if (!l) return;
+
+    if (this.target !== 'mask') {
+      // 图层：直接用 surface 的瓦片快照（只记首次碰到的瓦片）
+      const snap = l.surface.snapshotTiles(x - radius, y - radius, radius * 2, radius * 2);
+      for (const [k, s] of snap) {
+        if (this.before.has(k)) continue;
+        this.before.set(k, s);
+        if (s.existed && s.data) this.bytes += s.data.data.byteLength;
+      }
+      return;
+    }
+
     const ctx = this._ctx();
     if (!ctx) return;
     for (const k of this._keysFor(x, y, radius)) {
@@ -63,8 +78,31 @@ export class StrokeJournal {
 
   // 抬笔时调用：补齐 after 像素，返回可入栈的历史条目
   commit() {
+    if (this.before.size === 0) return null;
+
+    if (this.target !== 'mask') {
+      const l = this.layers.byId(this.layerId);
+      if (!l) return null;
+      for (const k of this.before.keys()) {
+        const b = this.before.get(k);
+        const t = l.surface.tiles.get(k);
+        if (t) {
+          const r = l.surface.tileRect(t.tx, t.ty);
+          const data = t.ctx.getImageData(0, 0, r.w, r.h);
+          this.after.set(k, { existed: true, tx: t.tx, ty: t.ty, w: r.w, h: r.h, data });
+          this.bytes += data.data.byteLength;
+        } else {
+          this.after.set(k, { existed: false, tx: b.tx, ty: b.ty, w: b.w, h: b.h });
+        }
+      }
+      return {
+        kind: 'tiles', layerId: this.layerId, target: this.target,
+        before: this.before, after: this.after, bytes: this.bytes,
+      };
+    }
+
     const ctx = this._ctx();
-    if (!ctx || this.before.size === 0) return null;
+    if (!ctx) return null;
     for (const k of this.before.keys()) {
       const [sx, sy, sw, sh] = this._rect(k);
       const img = ctx.getImageData(sx, sy, sw, sh);
@@ -139,27 +177,18 @@ export class History {
     this._notify();
   }
 
-  // 单图层整体替换（如「清空图层」）：before 由调用方在修改前复制
-  pushLayerDiff(layerId, beforeCanvas, label = '编辑') {
+  // 单图层整体替换（如「清空图层」「填充」「变换」）：before 由 captureLayer 取得
+  pushLayerDiff(layerId, before, label = '编辑') {
     const l = this.layers.byId(layerId);
-    if (!l) return;
-    const after = this._copy(beforeCanvas.width, beforeCanvas.height, l.canvas);
-    const before = this._copy(beforeCanvas.width, beforeCanvas.height, beforeCanvas);
+    if (!l || !before) return;
+    const after = l.surface.snapshotAll();
     this._push(this.undoStack, this.undoLabels, {
       kind: 'layer', layerId, before, after,
-      bytes: before.width * before.height * 4 * 2,
+      bytes: TileSurface.snapshotBytes(before) + TileSurface.snapshotBytes(after),
     }, label);
     this.redoStack.length = 0;
     this.redoLabels.length = 0;
     this._notify();
-  }
-
-  _copy(w, h, src) {
-    const c = document.createElement('canvas');
-    c.width = w;
-    c.height = h;
-    c.getContext('2d').drawImage(src, 0, 0);
-    return c;
   }
 
   // 撤销「刚压栈但实际没发生」的操作（如已到顶仍上移）
@@ -169,9 +198,10 @@ export class History {
     this._notify();
   }
 
+  // 记录整层瓦片快照（只存实际存在的瓦片，空白层几乎零开销）
   captureLayer(layerId) {
     const l = this.layers.byId(layerId);
-    return l ? this._copy(this.layers.w, this.layers.h, l.canvas) : null;
+    return l ? l.surface.snapshotAll() : null;
   }
 
   /* ---------- 应用 ---------- */
@@ -179,9 +209,15 @@ export class History {
   _applyTiles(entry, which) {
     const l = this.layers.byId(entry.layerId);
     if (!l) return;
-    const ctx = entry.target === 'mask' ? (l.mask && l.mask.ctx) : l.ctx;
-    if (!ctx) return;
     const map = which === 'before' ? entry.before : entry.after;
+
+    if (entry.target !== 'mask') {
+      l.surface.restoreTiles(map);
+      return;
+    }
+
+    const ctx = l.mask && l.mask.ctx;
+    if (!ctx) return;
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
@@ -200,13 +236,8 @@ export class History {
   _applyLayer(entry, which) {
     const l = this.layers.byId(entry.layerId);
     if (!l) return;
-    const src = which === 'before' ? entry.before : entry.after;
-    l.ctx.save();
-    l.ctx.globalCompositeOperation = 'source-over';
-    l.ctx.globalAlpha = 1;
-    l.ctx.clearRect(0, 0, this.layers.w, this.layers.h);
-    l.ctx.drawImage(src, 0, 0);
-    l.ctx.restore();
+    const snap = which === 'before' ? entry.before : entry.after;
+    l.surface.restoreAll(snap);
   }
 
   _doUndo() {

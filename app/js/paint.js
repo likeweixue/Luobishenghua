@@ -234,7 +234,8 @@ export class Smudge {
     b.globalCompositeOperation = 'source-over';
     b.globalAlpha = 1;
     b.clearRect(0, 0, box, box);
-    b.drawImage(layer.canvas, x - box / 2, y - box / 2, box, box, 0, 0, box, box);
+    // 直接从瓦片取这一块（只碰 1–4 个瓦片）
+    layer.surface.drawIntoRegion(b, x - box / 2, y - box / 2, box, box);
     // 圆形笔尖遮罩，避免拖出方块边
     b.globalCompositeOperation = 'destination-in';
     b.drawImage(getStamp('hard', '#ffffff'), 0, 0, box, box);
@@ -261,13 +262,11 @@ export class Smudge {
       s.globalCompositeOperation = 'source-over';
     }
 
-    const ctx = layer.ctx;
-    ctx.save();
-    if (opts.lockAlpha) ctx.globalCompositeOperation = 'source-atop';
     // 强度下限 0.5：否则每步 source-over 与底图混合会让颜色迅速变淡
-    ctx.globalAlpha = Math.max(0.05, Math.min(1, 0.5 + 0.5 * strength));
-    ctx.drawImage(this.scratch, x - box / 2, y - box / 2, box, box);
-    ctx.restore();
+    layer.surface.drawCanvas(this.scratch, x - box / 2, y - box / 2, {
+      alpha: Math.max(0.05, Math.min(1, 0.5 + 0.5 * strength)),
+      composite: opts.lockAlpha ? 'source-atop' : 'source-over',
+    });
 
     this._capture(layer, x, y, size, opts);
   }

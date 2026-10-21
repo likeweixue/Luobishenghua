@@ -525,12 +525,12 @@ function renderLayerPanel() {
 function refreshThumbs() {
   for (const thumb of layerListEl.querySelectorAll('canvas.thumb[data-layer-id]')) {
     const l = layers.byId(+thumb.dataset.layerId);
-    if (!l || !l.canvas) continue;
+    if (!l || !l.surface) continue;
     const tc = thumb.getContext('2d');
     tc.clearRect(0, 0, 30, 24);
     tc.save();
     tc.scale(30 / layers.w, 24 / layers.h);
-    tc.drawImage(l.canvas, 0, 0);
+    l.surface.drawInto(tc);
     tc.restore();
   }
   for (const mthumb of layerListEl.querySelectorAll('canvas.mthumb[data-mask-id]')) {
@@ -882,6 +882,12 @@ function updateStatus() {
     : '';
   document.getElementById('status-brush').textContent =
     `${name} · ${state.size}px · ${layers.active ? layers.active.name : ''}${selInfo}`;
+
+  // 瓦片存储的实时占用（这版重构的核心指标）
+  const memEl = document.getElementById('status-memory');
+  if (memEl) {
+    memEl.textContent = `${layers.tileCount()} 瓦片 · ${fmtBytes(layers.pixelBytes())}`;
+  }
   document.getElementById('btn-undo').disabled = !history.canUndo;
   document.getElementById('btn-redo').disabled = !history.canRedo;
   document.getElementById('zoom-label').textContent = Math.round(engine.view.scale * 100) + '%';
@@ -906,15 +912,8 @@ function clearActiveLayer() {
 
   if (!confirm(`清空「${l.name}」的内容？（可用撤销恢复）`)) return;
   const before = history.captureLayer(l.id);
-  l.ctx.save();
-  l.ctx.globalCompositeOperation = 'source-over';
-  if (l.locked) {
-    l.ctx.fillStyle = '#ffffff';
-    l.ctx.fillRect(0, 0, layers.w, layers.h);
-  } else {
-    l.ctx.clearRect(0, 0, layers.w, layers.h);
-  }
-  l.ctx.restore();
+  if (l.locked) l.surface.fill('#ffffff');
+  else l.surface.clearAll();
   history.pushLayerDiff(l.id, before, '清空图层');
   engine.render();
   refreshThumbs();
@@ -1104,8 +1103,7 @@ function newDocument(w, h) {
   layers.reset(w, h);
   const paper = layers._create('纸张');
   paper.locked = true;
-  paper.ctx.fillStyle = '#ffffff';
-  paper.ctx.fillRect(0, 0, w, h);
+  paper.surface.fill('#ffffff');
   layers.layers.push(paper);
   const l1 = layers._create('图层 1');
   layers.layers.push(l1);
@@ -1218,9 +1216,6 @@ function activeBrushType() {
   return state.tool === 'eraser' ? 'eraser' : state.brush;
 }
 
-function activeCtx() {
-  return layers.active ? layers.active.ctx : engine.dctx;
-}
 
 function getPressure(e) {
   const raw = (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 0.5;
@@ -1279,7 +1274,8 @@ const dabBuf = document.createElement('canvas');
 dabBuf.width = DAB_BUF;
 dabBuf.height = DAB_BUF;
 
-function maskedDab(ctx, type, color, x, y, size, alpha, jitter) {
+// 返回 { canvas, x, y }：canvas 是已按选区裁好的笔尖，x/y 是它在世界坐标里的中心
+function buildMaskedDab(type, color, x, y, size, jitter) {
   const b = dabBuf.getContext('2d');
   b.setTransform(1, 0, 0, 1, 0, 0);
   b.globalAlpha = 1;
@@ -1298,11 +1294,16 @@ function maskedDab(ctx, type, color, x, y, size, alpha, jitter) {
     dx - DAB_BUF / 2, dy - DAB_BUF / 2, DAB_BUF, DAB_BUF,
     0, 0, DAB_BUF, DAB_BUF);
   b.globalCompositeOperation = 'source-over';
+  return { canvas: dabBuf, x: dx, y: dy };
+}
 
+// 兼容旧调用名（测试里用过）
+function maskedDab(ctx, type, color, x, y, size, alpha, jitter) {
+  const d = buildMaskedDab(type, color, x, y, size, jitter);
   ctx.save();
   if (type === 'eraser') ctx.globalCompositeOperation = 'destination-out';
   ctx.globalAlpha = alpha;
-  ctx.drawImage(dabBuf, dx - DAB_BUF / 2, dy - DAB_BUF / 2, DAB_BUF, DAB_BUF);
+  ctx.drawImage(d.canvas, d.x - DAB_BUF / 2, d.y - DAB_BUF / 2, DAB_BUF, DAB_BUF);
   ctx.restore();
 }
 
@@ -1327,10 +1328,19 @@ function stampAt(x, y, pressure) {
     return;
   }
 
+  const isEraser = type === 'eraser';
+  const composite = isEraser ? 'destination-out' : (l.lockAlpha ? 'source-atop' : 'source-over');
+
   if (selection.active && l.type === 'layer') {
-    maskedDab(l.ctx, type, state.color, x, y, size, alpha, scatter);
+    const d = buildMaskedDab(type, state.color, x, y, size, scatter);
+    l.surface.drawCanvas(d.canvas, d.x - DAB_BUF / 2, d.y - DAB_BUF / 2, { alpha, composite });
   } else {
-    drawDab(l.ctx, type, state.color, x, y, size, alpha, scatter);
+    // 直接在世界坐标的瓦片上落章（surface.stamp 已把 ctx 平移好）
+    l.surface.stamp(x, y, size / 2 + 1, (ctx) => {
+      // 锁定透明像素：source-atop 只作用到已有像素上（橡皮不受影响）
+      if (l.lockAlpha && !isEraser) ctx.globalCompositeOperation = 'source-atop';
+      drawDab(ctx, type, state.color, x, y, size, alpha, scatter);
+    });
   }
 }
 
@@ -1343,12 +1353,7 @@ function beginStroke(e) {
   }
   state.journal = history.beginStroke(l.id, target);
   state.strokeTarget = target;
-  // 锁定透明像素：只在已有像素范围内绘制
-  if (target === 'layer' && l.lockAlpha) {
-    l.ctx.save();
-    l.ctx.globalCompositeOperation = 'source-atop';
-    state.lockAlphaSaved = true;
-  }
+  // 锁定透明像素不再需要 save/source-atop：落章时按瓦片带合成模式绘制
   const p = engine.screenToWorld(e.offsetX, e.offsetY);
   const pressure = getPressure(e);
   state.last = { ...p, pressure };
@@ -1424,7 +1429,9 @@ function doBucketFill(e) {
   if (!l) return;
   const p = engine.screenToWorld(e.offsetX, e.offsetY);
   const before = history.captureLayer(l.id);
-  const res = floodFill(l.canvas, layers.w, layers.h, p.x, p.y, state.color, {
+  // 洪泛需要整层连通性：临时拼一张整层画布，填完再拆回瓦片（一次性开销）
+  const tmp = l.surface.toCanvas();
+  const res = floodFill(tmp, layers.w, layers.h, p.x, p.y, state.color, {
     tolerance: state.fillTolerance,
     contiguous: state.fillContiguous,
     mask: selMask(),
@@ -1432,6 +1439,7 @@ function doBucketFill(e) {
     lockAlpha: l.lockAlpha,
   });
   if (!res || res.count === 0) { toast('这个位置没有可填充的区域'); return; }
+  l.surface.fromCanvas(tmp);
   history.pushLayerDiff(l.id, before, `油漆桶 ${res.count}px`);
   engine.render();
   refreshThumbs();
@@ -1487,7 +1495,8 @@ function finishGradient() {
   const l = targetLayer();
   if (!l) { engine.render(); return; }
   const before = history.captureLayer(l.id);
-  drawGradient(l.canvas, layers.w, layers.h, {
+  const tmp = l.surface.toCanvas();
+  drawGradient(tmp, layers.w, layers.h, {
     x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1,
     type: state.gradType,
     color: state.color,
@@ -1496,6 +1505,7 @@ function finishGradient() {
     mask: selMask(),
     lockAlpha: l.lockAlpha,
   });
+  l.surface.fromCanvas(tmp);
   history.pushLayerDiff(l.id, before, `${state.gradType === 'radial' ? '径向' : '线性'}渐变`);
   engine.render();
   refreshThumbs();
@@ -1553,17 +1563,15 @@ function continueSmudge(e) {
   scheduleStrokeRender();
 }
 
-function sampleCanvas() {
-  if (state.pickMode === 'layer') {
-    const l = layers.active;
-    if (l && l.type === 'layer') return l.canvas;
-  }
-  return engine.doc;
-}
-
 function pickAt(e) {
   const p = engine.screenToWorld(e.offsetX, e.offsetY);
-  const hex = pickColor(sampleCanvas(), p.x, p.y);
+  let hex = null;
+  if (state.pickMode === 'layer') {
+    const l = layers.active;
+    if (l && l.type === 'layer') hex = l.surface.colorAt(p.x, p.y);
+  } else {
+    hex = pickColor(engine.doc, p.x, p.y);
+  }
   if (!hex) return false;
   setColor(hex);
   return true;
@@ -1769,11 +1777,8 @@ function copySelection() {
   const l = layers.active;
   if (!l || l.type !== 'layer') { toast('请选择一个像素图层'); return false; }
   const b = selectionBounds();
-  const c = document.createElement('canvas');
-  c.width = Math.max(1, b.w);
-  c.height = Math.max(1, b.h);
+  const c = l.surface.extract(b.x, b.y, b.w, b.h);
   const ctx = c.getContext('2d');
-  ctx.drawImage(l.canvas, -b.x, -b.y);
   if (selection.active) {
     ctx.globalCompositeOperation = 'destination-in';
     ctx.drawImage(selection.mask, -b.x, -b.y);
@@ -1795,7 +1800,7 @@ function pasteClipboard() {
   history.pushFull('粘贴');
   const l = layers.addLayer();
   l.name = '粘贴';
-  l.ctx.drawImage(state.clipboard.canvas, state.clipboard.x, state.clipboard.y);
+  l.surface.putCanvas(state.clipboard.canvas, state.clipboard.x, state.clipboard.y);
   engine.render();
   refreshThumbs();
   updateStatus();
@@ -1808,11 +1813,8 @@ function clearSelectionContent(showConfirm = false) {
   if (!l) return;
   if (showConfirm && !confirm('清除选中内容？')) return;
   const before = history.captureLayer(l.id);
-  l.ctx.save();
-  l.ctx.globalCompositeOperation = 'destination-out';
-  if (selection.active) l.ctx.drawImage(selection.mask, 0, 0);
-  else l.ctx.clearRect(0, 0, layers.w, layers.h);
-  l.ctx.restore();
+  if (selection.active) l.surface.drawCanvas(selection.mask, 0, 0, { composite: 'destination-out' });
+  else l.surface.clearAll();
   history.pushLayerDiff(l.id, before, selection.active ? '清除选区' : '清除图层');
   engine.render();
   refreshThumbs();
@@ -1834,7 +1836,7 @@ function fillSelection() {
     tctx.globalCompositeOperation = 'destination-in';
     tctx.drawImage(selection.mask, 0, 0);
   }
-  l.ctx.drawImage(tmp, 0, 0);
+  l.surface.putCanvas(tmp, 0, 0);
   history.pushLayerDiff(l.id, before, '填充');
   engine.render();
   refreshThumbs();
@@ -1978,12 +1980,6 @@ function endPointer(e) {
     state.last = null;
     state.smoothPoint = null;
     flushStrokeRender();
-    const act = layers.active;
-    if (state.lockAlphaSaved && act && act.type === 'layer') {
-      act.ctx.restore();  // 解除 source-atop
-      act.ctx.globalCompositeOperation = 'source-over';
-      state.lockAlphaSaved = false;
-    }
     if (state.journal) {
       const toolName = state.tool === 'eraser' ? '橡皮擦' : (BrushRegistry.get(state.brush)?.name || '画笔');
       const where = state.strokeTarget === 'mask' ? '蒙版'
@@ -2143,7 +2139,7 @@ window.__lbsh = {
   saveProject,
   openProjectFromBytes,
   newDocument,
-  maskedDab,
+  maskedDab, stampAt, beginStroke, continueStroke,
   doBucketFill, startGradient, moveGradient, finishGradient,
   beginSmudge, continueSmudge, stampSmudge, pickAt, setColor,
   floodFill, drawGradient,

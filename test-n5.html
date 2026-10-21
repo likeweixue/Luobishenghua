@@ -7,6 +7,7 @@
 import { floodFill, drawGradient, Smudge, pickColor } from './app/js/paint.js';
 import { Dynamics } from './app/js/dynamics.js';
 import { Selection } from './app/js/selection.js';
+import { TileSurface } from './app/js/tiles.js';
 
 const out = [];
 let pass = 0, fail = 0;
@@ -118,27 +119,32 @@ try {
   const c8 = mk(120, 60), x8 = c8.getContext('2d');
   x8.fillStyle = '#e24b4a';
   x8.fillRect(0, 0, 60, 60);         // 左半红，右半透明
-  const layerStub = { canvas: c8, ctx: x8 };
+  const surf8 = new TileSurface(120, 60);
+  surf8.fromCanvas(c8);
+  const layerStub = { surface: surf8 };
   const sm = new Smudge();
   sm.begin(layerStub, 55, 30, 20, {});
   for (let i = 1; i <= 8; i++) {
     sm.drag(layerStub, 55 + i * 5, 30, 20, 0.8, {});
   }
-  const dragged = px(c8, 85, 30);
+  const dragged = surf8.pixelAt(85, 30);
   check(dragged[0] > 150 && dragged[3] > 60, '涂抹把红色拖到空白区', dragged + '');
-  check(px(c8, 0, 0)[0] > 200, '涂抹不破坏远处原有像素', px(c8, 0, 0) + '');
+  check(surf8.pixelAt(0, 0)[0] > 200, '涂抹不破坏远处原有像素', surf8.pixelAt(0, 0) + '');
+  check(surf8.tileCount === 1, '涂抹只在碰到的瓦片上分配（120×60 只需 1 块）', surf8.tileCount + '');
 
   // 涂抹 + 选区：选区外不落色
   const c8b = mk(120, 60), x8b = c8b.getContext('2d');
   x8b.fillStyle = '#378add';
   x8b.fillRect(0, 0, 60, 60);
+  const surf8b = new TileSurface(120, 60);
+  surf8b.fromCanvas(c8b);
   const sel8 = new Selection(120, 60);
   sel8.setPath(rectPath(0, 0, 70, 60), 'replace');   // 只允许到 x=70
-  const layer8b = { canvas: c8b, ctx: x8b };
+  const layer8b = { surface: surf8b };
   const sm2 = new Smudge();
   sm2.begin(layer8b, 55, 30, 16, { mask: sel8.mask });
   for (let i = 1; i <= 10; i++) sm2.drag(layer8b, 55 + i * 6, 30, 16, 0.9, { mask: sel8.mask });
-  check(px(c8b, 100, 30)[3] === 0, '涂抹被选区挡住（x>70 透明）', px(c8b, 100, 30) + '');
+  check(surf8b.pixelAt(100, 30)[3] === 0, '涂抹被选区挡住（x>70 透明）', surf8b.pixelAt(100, 30) + '');
 
   /* ================= 9. 压感曲线 ================= */
   Dynamics.setPreset('linear');

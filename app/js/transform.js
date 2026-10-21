@@ -22,33 +22,24 @@ export class Transform {
     const bounds = hasSel ? this.selection.bounds : { x: 0, y: 0, w, h };
 
     this.layer = layer;
-    this.before = document.createElement('canvas');
-    this.before.width = w;
-    this.before.height = h;
-    this.before.getContext('2d').drawImage(layer.canvas, 0, 0);
+    // 取消时用它整层还原（只存实际存在的瓦片，空白区域零开销）
+    this.beforeSnap = layer.surface.snapshotAll();
 
-    // 源：选区内容或整层
-    const src = document.createElement('canvas');
-    src.width = Math.max(1, bounds.w);
-    src.height = Math.max(1, bounds.h);
-    const sctx = src.getContext('2d');
-    sctx.drawImage(layer.canvas, -bounds.x, -bounds.y);
+    // 源：选区内容或整层（直接从瓦片取这块区域）
+    const src = layer.surface.extract(bounds.x, bounds.y, bounds.w, bounds.h);
     if (hasSel) {
+      const sctx = src.getContext('2d');
       sctx.globalCompositeOperation = 'destination-in';
       sctx.drawImage(this.selection.mask, -bounds.x, -bounds.y);
       sctx.globalCompositeOperation = 'source-over';
     }
 
     // 从图层挖掉
-    const lctx = layer.ctx;
-    lctx.save();
     if (hasSel) {
-      lctx.globalCompositeOperation = 'destination-out';
-      lctx.drawImage(this.selection.mask, 0, 0);
+      layer.surface.drawCanvas(this.selection.mask, 0, 0, { composite: 'destination-out' });
     } else {
-      lctx.clearRect(0, 0, w, h);
+      layer.surface.clearAll();
     }
-    lctx.restore();
 
     this.source = src;
     this.srcW = src.width;
@@ -220,14 +211,9 @@ export class Transform {
     tctx.drawImage(this.source, -this.srcW / 2, -this.srcH / 2, this.srcW, this.srcH);
     tctx.restore();
 
-    const lctx = this.layer.ctx;
-    lctx.save();
-    lctx.globalCompositeOperation = 'source-over';
-    lctx.globalAlpha = 1;
-    lctx.drawImage(tmp, 0, 0);
-    lctx.restore();
+    this.layer.surface.putCanvas(tmp, 0, 0);
 
-    this.history.pushLayerDiff(this.layer.id, this.before, '自由变换');
+    this.history.pushLayerDiff(this.layer.id, this.beforeSnap, '自由变换');
     this._cleanup();
     this.engine.render();
     if (this.layers.onChange) this.layers.onChange();
@@ -236,13 +222,7 @@ export class Transform {
 
   cancel() {
     if (!this.active) return false;
-    const lctx = this.layer.ctx;
-    lctx.save();
-    lctx.globalCompositeOperation = 'source-over';
-    lctx.globalAlpha = 1;
-    lctx.clearRect(0, 0, this.layers.w, this.layers.h);
-    lctx.drawImage(this.before, 0, 0);
-    lctx.restore();
+    if (this.beforeSnap) this.layer.surface.restoreAll(this.beforeSnap);
     this._cleanup();
     this.engine.render();
     if (this.layers.onChange) this.layers.onChange();
@@ -257,7 +237,7 @@ export class Transform {
     this.active = false;
     this.drag = null;
     this.source = null;
-    this.before = null;
+    this.beforeSnap = null;
     this.engine.transform = null;
   }
 

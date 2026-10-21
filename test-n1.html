@@ -15,10 +15,26 @@ const check = (cond, label, extra = '') => {
   else { fail++; out.push('❌ ' + label + (extra ? ' — ' + extra : '')); }
 };
 
-function px(layer, x, y) {
-  const ctx = layer.ctx || layer.canvas.getContext('2d');
+function px(target, x, y) {
+  if (!target) return [0, 0, 0, 0];
+  if (target.surface) return target.surface.pixelAt(x, y);
+  let ctx = null;
+  if (typeof target.getImageData === 'function') ctx = target;          // 已经是 ctx
+  else if (target.ctx) ctx = target.ctx;                                // 蒙版 {canvas, ctx}
+  else if (target.canvas) ctx = target.canvas.getContext('2d');         // 工程/PSD 节点定义
+  else ctx = target.getContext('2d');                                   // 画布
   const d = ctx.getImageData(x, y, 1, 1).data;
   return [d[0], d[1], d[2], d[3]];
+}
+
+function paintLayer(layer, color, x, y, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const cc = c.getContext('2d');
+  cc.fillStyle = color;
+  cc.fillRect(0, 0, w, h);
+  layer.surface.putCanvas(c, x, y);
 }
 
 async function run() {
@@ -28,8 +44,7 @@ async function run() {
   active.name = '线稿层';
   active.opacity = 0.75;
   active.blend = 'multiply';
-  active.ctx.fillStyle = '#e24b4a';
-  active.ctx.fillRect(10, 10, 30, 30);
+  paintLayer(active, '#e24b4a', 10, 10, 30, 30);
 
   const { bytes, manifest } = await serializeProject(layers, { doc: null });
   check(bytes.length > 100, '序列化产出字节数 ' + bytes.length);
@@ -53,17 +68,22 @@ async function run() {
   const before = px(active, 60, 60);
   const j = hist.beginStroke(active.id);
   j.captureBefore(60, 60, 12);
-  active.ctx.fillStyle = '#000000';
-  active.ctx.beginPath();
-  active.ctx.arc(60, 60, 6, 0, Math.PI * 2);
-  active.ctx.fill();
+  const dab = document.createElement('canvas');
+  dab.width = dab.height = 12;
+  const dctx = dab.getContext('2d');
+  dctx.fillStyle = '#000000';
+  dctx.beginPath();
+  dctx.arc(6, 6, 6, 0, Math.PI * 2);
+  dctx.fill();
+  active.surface.putCanvas(dab, 54, 54);
   const committed = hist.commitStroke(j, '测试笔画');
   check(committed === true, '笔画提交成功');
   const drawn = px(active, 60, 60);
   check(drawn[0] < 40, '笔画确实画上了');
 
   check(hist.memoryBytes() > 0, '增量快照占用 ' + hist.memoryBytes() + ' 字节');
-  check(hist.memoryBytes() < 200 * 150 * 4 * 2, '占用小于整层两份快照（增量生效）');
+  // 200×150 小于一个 256 瓦片，所以这里必然等于整层两份；真正的增量效果在大文档里验证
+  check(hist.memoryBytes() <= 200 * 150 * 4 * 2, '小文档占用不超过整层两份快照');
 
   hist.undo();
   check(px(active, 60, 60).join(',') === before.join(','), '撤销后像素还原');
@@ -85,8 +105,7 @@ async function run() {
   for (let i = 0; i < 3; i++) {
     const jj = hist.beginStroke(active.id);
     jj.captureBefore(100 + i * 10, 100, 5);
-    active.ctx.fillStyle = '#378add';
-    active.ctx.fillRect(98 + i * 10, 98, 6, 6);
+    paintLayer(active, '#378add', 98 + i * 10, 98, 6, 6);
     hist.commitStroke(jj, '笔画 ' + (i + 1));
   }
   check(hist.timeline().length === 5, '多步后时间轴 5 项');
@@ -95,6 +114,35 @@ async function run() {
   check(hist.timeline().length === 6, '结构操作入栈');
   hist.jumpTo(0);
   check(layers.layers.length === 2, 'jumpTo(0) 结构也回滚（图层数 2）', '实际 ' + layers.layers.length);
+
+  /* ---------- 5. 大文档瓦片增量（关键：内存/笔画面积成正比） ---------- */
+  const big = new LayerStack(1024, 768);
+  const bl = big.active;
+  const bhist = new History({ render() {} }, big, 50);
+  const bj = bhist.beginStroke(bl.id);
+  const step = 8;   // 半径 8 的笔尖走一小段
+  for (let i = 0; i < 20; i++) {
+    bj.captureBefore(100 + i * 4, 100, step + 2);
+    const c = document.createElement('canvas');
+    c.width = c.height = step * 2;
+    const cc = c.getContext('2d');
+    cc.fillStyle = '#222222';
+    cc.beginPath();
+    cc.arc(step, step, step, 0, Math.PI * 2);
+    cc.fill();
+    bl.surface.putCanvas(c, 100 + i * 4 - step, 100 - step);
+  }
+  bhist.commitStroke(bj, '一小组笔画');
+  const fullTwo = 1024 * 768 * 4 * 2;
+  check(bhist.memoryBytes() < fullTwo * 0.15, '大文档增量快照远小于整层两份（<15%）', bhist.memoryBytes() + ' / ' + fullTwo);
+
+  // 只要画过的区域才分配瓦片
+  const empty = new LayerStack(1024, 768);
+  check(empty.active.surface.tileCount === 0, '空白层不分配任何瓦片');
+  check(empty.leaves().length === 2 && empty.leaves()[0].surface.tileCount > 0, '纸张层是实心（有瓦片）');
+  const bytesEmpty = empty.pixelBytes();
+  const bytesFull = 2 * 1024 * 768 * 4;
+  check(bytesEmpty < bytesFull * 0.6, '新建大文档像素内存只有纸张一层', bytesEmpty + ' / ' + bytesFull);
 
   const text = out.join('\n');
   document.getElementById('out').textContent = text + `\n\n结果：${pass} 通过 / ${fail} 失败`;

@@ -2,11 +2,16 @@
 //
 // 节点结构：
 //   图层 { id, type:'layer', name, visible, opacity, blend, locked, lockAlpha,
-//          clipping, canvas, ctx, mask: null | { canvas, ctx, enabled } }
+//          clipping, surface: TileSurface, mask: null | { canvas, ctx, enabled } }
 //   组   { id, type:'group', name, visible, opacity, blend, locked,
 //          clipping, expanded, children: [] }
 //
+// 存储：像素存在 TileSurface（256×256 按需分配的瓦片）里，不再是整张画布。
+// 蒙版暂时仍是一张整画布（蒙版数量少，且默认全显示需要连续数据）。
+//
 // 数组约定：同一层内 children[0] 在最下面，末尾在最上面（与 PSD 文件顺序一致）。
+
+import { TileSurface } from './tiles.js';
 
 export class LayerStack {
   constructor(w, h) {
@@ -16,13 +21,12 @@ export class LayerStack {
     this.nextId = 1;
     this.activeId = null;
     this.onChange = null;
-    this._bufs = [];         // 合成缓冲区池（组缓冲 / 蒙版 / 剪贴）
+    this._bufs = [];         // 合成缓冲区池（组缓冲 / 蒙版 / 剪贴 / 基底）
     this._checker = null;
 
     const paper = this._create('纸张');
     paper.locked = true;
-    paper.ctx.fillStyle = '#ffffff';
-    paper.ctx.fillRect(0, 0, w, h);
+    paper.surface.fill('#ffffff');
     this.layers.push(paper);
 
     const l1 = this._create('图层 1');
@@ -33,15 +37,11 @@ export class LayerStack {
   /* ---------------- 节点创建 ---------------- */
 
   _create(name) {
-    const canvas = document.createElement('canvas');
-    canvas.width = this.w;
-    canvas.height = this.h;
     return {
       id: this.nextId++,
       type: 'layer',
       name,
-      canvas,
-      ctx: canvas.getContext('2d'),
+      surface: new TileSurface(this.w, this.h),
       visible: true,
       opacity: 1,
       blend: 'source-over',
@@ -174,7 +174,7 @@ export class LayerStack {
     if (def.locked !== undefined) l.locked = def.locked;
     if (def.lockAlpha) l.lockAlpha = true;
     if (def.clipping) l.clipping = true;
-    if (def.canvas) l.ctx.drawImage(def.canvas, def.left || 0, def.top || 0);
+    if (def.canvas) l.surface.putCanvas(def.canvas, def.left || 0, def.top || 0);
     if (def.maskCanvas) l.mask = this._makeMaskFromCanvas(def.maskCanvas);
     this.layers.push(l);
     this.activeId = l.id;
@@ -198,7 +198,7 @@ export class LayerStack {
       const l = this._create(d.name || '图层');
       this._applyDef(l, d);
       l.lockAlpha = !!d.lockAlpha;
-      if (d.canvas) l.ctx.drawImage(d.canvas, d.left || 0, d.top || 0);
+      if (d.canvas) l.surface.putCanvas(d.canvas, d.left || 0, d.top || 0);
       if (d.maskCanvas) {
         l.mask = this._makeMaskFromCanvas(d.maskCanvas);
         l.mask.enabled = d.maskEnabled !== false;
@@ -495,17 +495,30 @@ export class LayerStack {
     if (below.locked) return false;
 
     const c = this._blank();
-    const ctx = c.getContext('2d');
-    ctx.save();
-    ctx.globalAlpha = below.opacity;
-    ctx.drawImage(this._contentOf(below), 0, 0);
-    ctx.globalAlpha = above.opacity;
-    ctx.globalCompositeOperation = above.clipping ? 'source-atop' : above.blend;
-    ctx.drawImage(this._contentOf(above), 0, 0);
-    ctx.restore();
+    const cctx = c.getContext('2d');
+    cctx.save();
+    cctx.globalCompositeOperation = 'source-over';
+    cctx.globalAlpha = 1;
+    cctx.clearRect(0, 0, this.w, this.h);
+    cctx.restore();
 
-    below.ctx.clearRect(0, 0, this.w, this.h);
-    below.ctx.drawImage(c, 0, 0);
+    this._drawNodeContent(cctx, below, 0);
+    if (above.clipping) {
+      // 剪贴层：用合并后的下层 alpha 裁一次，再按自己的不透明度叠加
+      const buf = this._buffer(2);
+      this._drawNodeContent(buf.ctx, above, 0, true);
+      buf.ctx.globalCompositeOperation = 'destination-in';
+      buf.ctx.drawImage(c, 0, 0);
+      buf.ctx.globalCompositeOperation = 'source-over';
+      cctx.save();
+      cctx.globalAlpha = above.opacity;
+      cctx.drawImage(buf.canvas, 0, 0);
+      cctx.restore();
+    } else {
+      this._drawNodeContent(cctx, above, 0);
+    }
+
+    below.surface.fromCanvas(c);
     below.opacity = 1;
     below.blend = 'source-over';
     below.mask = null;
@@ -522,7 +535,7 @@ export class LayerStack {
     const c = this._blank();
     this.composite(c.getContext('2d'), { checkerboard: false });
     const l = this._create('盖印图层');
-    l.ctx.drawImage(c, 0, 0);
+    l.surface.fromCanvas(c);
     const arr = this.activeParent();
     const loc = this.locate(this.activeId);
     arr.splice(loc ? loc.index + 1 : arr.length, 0, l);
@@ -542,7 +555,7 @@ export class LayerStack {
     });
     this.layers = prune(this.layers);
     const l = this._create('合并图层');
-    l.ctx.drawImage(c, 0, 0);
+    l.surface.fromCanvas(c);
     this.layers.push(l);
     this.activeId = l.id;
     this._changed();
@@ -555,7 +568,7 @@ export class LayerStack {
     this.composite(c.getContext('2d'), { checkerboard: false });
     this.layers = [];
     const l = this._create('背景');
-    l.ctx.drawImage(c, 0, 0);
+    l.surface.fromCanvas(c);
     this.layers.push(l);
     this.activeId = l.id;
     this._changed();
@@ -564,6 +577,7 @@ export class LayerStack {
 
   /* ---------------- 合成 ---------------- */
 
+  // 缓冲池：每个嵌套层级 4 个槽（组 / 蒙版 / 剪贴 / 基底）
   _buffer(slot) {
     let c = this._bufs[slot];
     if (!c) {
@@ -582,77 +596,80 @@ export class LayerStack {
     return { canvas: c, ctx };
   }
 
-  _draw(target, src, node) {
+  _applyMaskInPlace(ctx, mask) {
+    if (!mask || !mask.enabled) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(mask.canvas, 0, 0);
+    ctx.restore();
+  }
+
+  /**
+   * 把一个节点画到目标 ctx。
+   * raw = true 时忽略不透明度 / 混合模式，只画「内容」（剪贴基底、合并时用）。
+   */
+  _drawNodeContent(target, node, depth, raw = false) {
+    let src = null;
+
+    if (node.type === 'group') {
+      const buf = this._buffer(depth * 4);
+      this._renderNodes(node.children, buf.ctx, depth + 1);
+      this._applyMaskInPlace(buf.ctx, node.mask);
+      src = buf.canvas;
+    } else if (node.mask && node.mask.enabled) {
+      const m = this._buffer(depth * 4 + 1);
+      node.surface.drawInto(m.ctx);
+      this._applyMaskInPlace(m.ctx, node.mask);
+      src = m.canvas;
+    }
+
     target.save();
-    target.globalAlpha = node.opacity;
-    target.globalCompositeOperation = node.blend || 'source-over';
-    target.drawImage(src, 0, 0);
+    target.globalAlpha = raw ? 1 : node.opacity;
+    target.globalCompositeOperation = raw ? 'source-over' : (node.blend || 'source-over');
+    if (src) target.drawImage(src, 0, 0);
+    else node.surface.drawInto(target);
     target.restore();
   }
 
-  // 图层内容（叠加蒙版后的结果）
+  /** 物化一个节点的「内容」为画布（不含节点自身不透明度 / 混合模式） */
+  _materializeContent(node, depth) {
+    const c = this._blank();
+    this._drawNodeContent(c.getContext('2d'), node, depth, true);
+    return c;
+  }
+
+  // 兼容旧接口：返回节点内容的画布
   _contentOf(node, depth = 0) {
-    if (!node.mask || !node.mask.enabled) return node.canvas;
-    const m = this._buffer(depth * 3 + 1);
-    m.ctx.drawImage(node.canvas, 0, 0);
-    m.ctx.globalCompositeOperation = 'destination-in';
-    m.ctx.drawImage(node.mask.canvas, 0, 0);
-    m.ctx.globalCompositeOperation = 'source-over';
-    return m.canvas;
+    return this._materializeContent(node, depth);
   }
 
   _renderNodes(nodes, target, depth) {
-    let clipBase = null;
+    let baseNode = null;     // 可能的剪贴基底
+    let baseCanvas = null;   // 惰性物化（只有真的遇到剪贴层才做）
+
     for (const node of nodes) {
       if (!node.visible) {
-        if (!node.clipping) clipBase = null;
+        if (!node.clipping) { baseNode = null; baseCanvas = null; }
         continue;
       }
 
-      if (node.type === 'group') {
-        const buf = this._buffer(depth * 3);
-        this._renderNodes(node.children, buf.ctx, depth + 1);
-        let src = buf.canvas;
-        if (node.mask && node.mask.enabled) {
-          const m = this._buffer(depth * 3 + 1);
-          m.ctx.drawImage(src, 0, 0);
-          m.ctx.globalCompositeOperation = 'destination-in';
-          m.ctx.drawImage(node.mask.canvas, 0, 0);
-          m.ctx.globalCompositeOperation = 'source-over';
-          src = m.canvas;
-        }
-        if (node.clipping && clipBase) {
-          const c = this._buffer(depth * 3 + 2);
-          c.ctx.drawImage(src, 0, 0);
-          c.ctx.globalCompositeOperation = 'destination-in';
-          c.ctx.drawImage(clipBase, 0, 0);
-          c.ctx.globalCompositeOperation = 'source-over';
-          this._draw(target, c.canvas, node);
-        } else {
-          this._draw(target, src, node);
-          clipBase = src;
-        }
+      if (node.clipping && baseNode) {
+        if (!baseCanvas) baseCanvas = this._materializeContent(baseNode, depth);
+        const c = this._buffer(depth * 4 + 2);
+        this._drawNodeContent(c.ctx, node, depth, true);
+        c.ctx.globalCompositeOperation = 'destination-in';
+        c.ctx.drawImage(baseCanvas, 0, 0);
+        c.ctx.globalCompositeOperation = 'source-over';
+
+        target.save();
+        target.globalAlpha = node.opacity;
+        target.globalCompositeOperation = node.blend || 'source-over';
+        target.drawImage(c.canvas, 0, 0);
+        target.restore();
       } else {
-        let src = node.canvas;
-        if (node.mask && node.mask.enabled) {
-          const m = this._buffer(depth * 3 + 1);
-          m.ctx.drawImage(node.canvas, 0, 0);
-          m.ctx.globalCompositeOperation = 'destination-in';
-          m.ctx.drawImage(node.mask.canvas, 0, 0);
-          m.ctx.globalCompositeOperation = 'source-over';
-          src = m.canvas;
-        }
-        if (node.clipping && clipBase) {
-          const c = this._buffer(depth * 3 + 2);
-          c.ctx.drawImage(src, 0, 0);
-          c.ctx.globalCompositeOperation = 'destination-in';
-          c.ctx.drawImage(clipBase, 0, 0);
-          c.ctx.globalCompositeOperation = 'source-over';
-          this._draw(target, c.canvas, node);
-        } else {
-          this._draw(target, src, node);
-          clipBase = src;
-        }
+        this._drawNodeContent(target, node, depth);
+        baseNode = node;
+        baseCanvas = null;
       }
     }
   }
@@ -685,6 +702,21 @@ export class LayerStack {
     return this._checker;
   }
 
+  /* ---------------- 内存统计 ---------------- */
+
+  // 所有图层瓦片占用（字节），用于状态栏 / 基准台
+  pixelBytes() {
+    let n = 0;
+    for (const l of this.leaves()) n += l.surface.byteSize();
+    return n;
+  }
+
+  tileCount() {
+    let n = 0;
+    for (const l of this.leaves()) n += l.surface.tileCount;
+    return n;
+  }
+
   /* ---------------- 历史快照（引用式） ---------------- */
 
   _snapNodes(nodes) {
@@ -698,7 +730,7 @@ export class LayerStack {
       if (n.type === 'group') {
         return { ...base, expanded: n.expanded, children: this._snapNodes(n.children) };
       }
-      return { ...base, lockAlpha: n.lockAlpha, canvas: n.canvas };
+      return { ...base, lockAlpha: n.lockAlpha, surface: n.surface };
     });
   }
 
@@ -708,17 +740,14 @@ export class LayerStack {
         id: m.id, type: m.type, name: m.name,
         visible: m.visible, opacity: m.opacity, blend: m.blend,
         locked: m.locked, clipping: m.clipping,
-        mask: m.mask ? { canvas: m.mask.canvas, ctx: m.mask.canvas.getContext('2d'), enabled: m.mask.enabled } : null,
+        mask: m.mask
+          ? { canvas: m.mask.canvas, ctx: m.mask.canvas.getContext('2d'), enabled: m.mask.enabled }
+          : null,
       };
       if (m.type === 'group') {
         return { ...base, expanded: m.expanded, children: this._restoreNodes(m.children) };
       }
-      return {
-        ...base,
-        lockAlpha: m.lockAlpha,
-        canvas: m.canvas,
-        ctx: m.canvas.getContext('2d'),
-      };
+      return { ...base, lockAlpha: m.lockAlpha, surface: m.surface };
     });
   }
 

@@ -65,7 +65,8 @@ async function collectNodes(nodes, files, counter) {
       out.push(g);
     } else {
       const file = `layers/${String(counter.layer++).padStart(3, '0')}.png`;
-      files.push({ name: file, data: await canvasToPng(n.canvas) });
+      // 瓦片拼成整层再编码 PNG（编码完即释放）
+      files.push({ name: file, data: await canvasToPng(n.surface.toCanvas()) });
       const d = {
         type: 'layer',
         name: n.name,

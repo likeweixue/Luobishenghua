@@ -207,9 +207,9 @@ export function aboutDialog() {
   showModal('关于落笔生花', `
     <div class="about">
       <div class="about-name">落笔生花</div>
-      <div class="about-en">Luobishenghua · beta9</div>
+      <div class="about-en">Luobishenghua · beta10</div>
       <p>一款正在生长的绘画软件。</p>
-      <p>压感笔刷引擎 · 图层组 / 蒙版 / 剪贴蒙版 · 选区 / 自由变换<br>涂抹 · 油漆桶 · 渐变 · 吸管 · 可调压感曲线与倾斜<br>PSD 分层互通 · .abr 笔刷生态 · 原生工程 .lbsh<br>增量撤销 · 自动保存与崩溃恢复 · 全部为手写零依赖实现</p>
+      <p>瓦片化图层存储（大画布 / 多图层）· 压感笔刷引擎<br>图层组 / 蒙版 / 剪贴蒙版 · 选区 / 自由变换<br>涂抹 · 油漆桶 · 渐变 · 吸管 · 可调压感曲线与倾斜<br>PSD 分层互通 · .abr 笔刷生态 · 原生工程 .lbsh<br>增量撤销 · 自动保存与崩溃恢复 · 全部为手写零依赖实现</p>
       <p class="about-credit">开发：WorkBuddy × likeweixue</p>
     </div>`);
 }
