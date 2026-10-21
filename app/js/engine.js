@@ -105,7 +105,8 @@ export class Engine {
     }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#e4e4e9';
+    // 工作区底色：PS 式深灰（面板间隙透出的也是深灰，不会出现白缝）
+    ctx.fillStyle = '#1e1e1e';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -113,10 +114,11 @@ export class Engine {
     ctx.rotate(v.rotation);
     ctx.scale(v.scale, v.scale);
 
-    // 文档投影边
+    // 文档投影边（深色工作区下需要更重的投影才看得出层次）
     ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.25)';
-    ctx.shadowBlur = 24 / v.scale;
+    ctx.shadowColor = 'rgba(0,0,0,0.55)';
+    ctx.shadowBlur = 28 / v.scale;
+    ctx.shadowOffsetY = 2 / v.scale;
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, this.docW, this.docH);
     ctx.restore();
@@ -125,8 +127,8 @@ export class Engine {
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(this.doc, 0, 0);
 
-    // 文档边框
-    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+    // 文档边框（深色背景上用浅描边勾出纸张边界）
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
     ctx.lineWidth = 1 / v.scale;
     ctx.strokeRect(0, 0, this.docW, this.docH);
 

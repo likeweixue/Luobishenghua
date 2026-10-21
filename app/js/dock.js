@@ -1,7 +1,8 @@
 // 停靠系统：可拖动面板 + 磁吸停靠（左右边缘堆叠、面板间吸附）
 const EDGE_ZONE = 56;   // 靠近边缘多少 px 触发停靠
 const SNAP_DIST = 18;   // 浮动面板之间的磁吸距离
-const GAP = 8;
+const GAP = 8;          // 浮动面板与屏幕边缘的留白
+const DOCK_GAP = 0;     // 停靠列内面板间距：0 = PS 式贴合，靠 1px 边框做分隔
 
 export class Dock {
   constructor(rootEl, stageEl) {
@@ -66,9 +67,9 @@ export class Dock {
     return p && !p.classList.contains('panel-hidden');
   }
 
-  // 恢复默认布局（左侧：工具/工具属性/笔刷仓库/颜色；右侧：导航器/图层）
+  // 恢复默认布局（左侧：工具/笔刷仓库/颜色；右侧：导航器/图层）
   resetLayout() {
-    const defaults = { left: ['tools', 'tool-props', 'brushes', 'color'], right: ['navigator', 'layers'] };
+    const defaults = { left: ['tools', 'brushes', 'color'], right: ['navigator', 'layers'] };
     for (const [side, ids] of Object.entries(defaults)) {
       ids.forEach((id, i) => {
         const p = this.panels.find(p => p.dataset.panel === id);
@@ -92,14 +93,14 @@ export class Dock {
 
   reflow(side) {
     const list = this.column(side);
-    let y = GAP;
+    let y = DOCK_GAP;
     list.forEach((p, i) => {
       p.dataset.order = i;
       p.style.left = side === 'left'
-        ? GAP + 'px'
-        : (this.stage.clientWidth - p.offsetWidth - GAP) + 'px';
+        ? DOCK_GAP + 'px'
+        : (this.stage.clientWidth - p.offsetWidth - DOCK_GAP) + 'px';
       p.style.top = y + 'px';
-      y += p.offsetHeight + GAP;
+      y += p.offsetHeight + DOCK_GAP;
     });
   }
 
@@ -210,12 +211,12 @@ export class Dock {
     const col = this.column(side).filter(p => p !== dragged);
     const w = dragged.offsetWidth;
     const h = dragged.offsetHeight;
-    let y = GAP;
+    let y = DOCK_GAP;
     for (let i = 0; i <= col.length; i++) {
       if (i === index) break;
-      y += col[i].offsetHeight + GAP;
+      y += col[i].offsetHeight + DOCK_GAP;
     }
-    const x = side === 'left' ? GAP : this.stage.clientWidth - w - GAP;
+    const x = side === 'left' ? DOCK_GAP : this.stage.clientWidth - w - DOCK_GAP;
     this.preview.style.display = 'block';
     this.preview.style.left = x + 'px';
     this.preview.style.top = y + 'px';

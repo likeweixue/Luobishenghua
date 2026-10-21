@@ -32,6 +32,8 @@ export function initMenuBar(actions) {
     {
       label: '文件',
       items: [
+        { label: '首页 / 最近文件', action: 'home' },
+        { sep: true },
         { label: '新建文档…', shortcut: '⌘N', action: 'newDoc' },
         { label: '打开 PSD…', shortcut: '⌘O', action: 'openPSD' },
         { sep: true },
@@ -46,6 +48,18 @@ export function initMenuBar(actions) {
       items: [
         { label: '撤销', shortcut: '⌘Z', action: 'undo' },
         { label: '重做', shortcut: '⇧⌘Z', action: 'redo' },
+        { sep: true },
+        { label: '清空当前图层', action: 'clearLayer' },
+      ],
+    },
+    {
+      label: '图层',
+      items: [
+        { label: '新建图层', action: 'layerNew' },
+        { label: '删除图层', action: 'layerDelete' },
+        { sep: true },
+        { label: '上移一层', action: 'layerUp' },
+        { label: '下移一层', action: 'layerDown' },
         { sep: true },
         { label: '清空当前图层', action: 'clearLayer' },
       ],
@@ -158,7 +172,7 @@ export function aboutDialog() {
   showModal('关于落笔生花', `
     <div class="about">
       <div class="about-name">落笔生花</div>
-      <div class="about-en">Luobishenghua · beta1</div>
+      <div class="about-en">Luobishenghua · beta4</div>
       <p>一款正在生长的绘画软件。</p>
       <p>压感笔刷引擎 · 多层混合 · PSD 分层互通 · .abr 笔刷生态<br>全部为手写零依赖实现</p>
       <p class="about-credit">开发：WorkBuddy × likeweixue</p>

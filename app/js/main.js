@@ -4,6 +4,7 @@ import { History } from './history.js';
 import { BrushPresets, BrushRegistry, registerCustomBrush, brushThumbnail, pressureSize, pressureAlpha, drawDab } from './brushes.js';
 import { readABR } from './abr.js';
 import { initMenuBar, aboutDialog, shortcutsDialog, settingsDialog, newDocDialog } from './menu.js';
+import { createHome, addRecent, toast } from './home.js';
 
 /* ---------------- 设置（localStorage 持久化） ---------------- */
 
@@ -35,6 +36,8 @@ const state = {
   color: '#222222',
   size: 24,
   opacity: 1,
+  smoothing: 0,           // 防抖强度 0..1
+  smoothPoint: null,     // 防抖平滑后的位置
   drawing: false,
   panning: false,
   spaceDown: false,
@@ -43,13 +46,37 @@ const state = {
   panLast: null,
 };
 
+/* ---------------- 首页 ---------------- */
+
+let homeApi = null;
+function hideHome() { if (homeApi) homeApi.hide(); }
+
 /* ---------------- 工具面板 ---------------- */
 
 const toolBtns = document.querySelectorAll('#tool-list button');
+
+function refreshOptionsBarTool() {
+  const icon = document.getElementById('opt-tool-icon');
+  const name = document.getElementById('opt-tool-name');
+  if (!icon || !name) return;
+  if (state.tool === 'eraser') {
+    icon.textContent = '◻';
+    name.textContent = '橡皮擦';
+  } else if (state.tool === 'hand') {
+    icon.textContent = '✋';
+    name.textContent = '抓手';
+  } else {
+    icon.textContent = '✏';
+    const b = BrushRegistry.get(state.brush);
+    name.textContent = '画笔' + (b && b.custom ? ' · ' + b.name : '');
+  }
+}
+
 function setTool(tool) {
   state.tool = tool;
   toolBtns.forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
   canvas.classList.toggle('panning', tool === 'hand');
+  refreshOptionsBarTool();
   updateStatus();
 }
 toolBtns.forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
@@ -155,6 +182,8 @@ for (const c of swatchColors) {
 
 const sizeInput = document.getElementById('brush-size');
 const opacityInput = document.getElementById('brush-opacity');
+const smoothingInput = document.getElementById('brush-smoothing');
+
 sizeInput.addEventListener('input', () => {
   state.size = +sizeInput.value;
   document.getElementById('brush-size-val').textContent = sizeInput.value;
@@ -163,6 +192,10 @@ sizeInput.addEventListener('input', () => {
 opacityInput.addEventListener('input', () => {
   state.opacity = +opacityInput.value / 100;
   document.getElementById('brush-opacity-val').textContent = opacityInput.value + '%';
+});
+smoothingInput.addEventListener('input', () => {
+  state.smoothing = +smoothingInput.value / 100;
+  document.getElementById('brush-smoothing-val').textContent = smoothingInput.value + '%';
 });
 
 /* ---------------- 图层面板 ---------------- */
@@ -302,7 +335,7 @@ function updateStatus() {
 
 document.getElementById('btn-undo').addEventListener('click', () => { history.undo(); refreshThumbs(); updateStatus(); });
 document.getElementById('btn-redo').addEventListener('click', () => { history.redo(); refreshThumbs(); updateStatus(); });
-document.getElementById('btn-clear').addEventListener('click', () => {
+function clearActiveLayer() {
   const l = layers.active;
   if (!l) return;
   if (!confirm(`清空「${l.name}」的内容？（可用撤销恢复）`)) return;
@@ -319,7 +352,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   engine.render();
   refreshThumbs();
   updateStatus();
-});
+}
 /* ---------------- 文件保存桥（Tauri 桌面 / Web 回退） ---------------- */
 
 const TAURI = window.__TAURI__ || null;
@@ -357,7 +390,7 @@ document.getElementById('btn-save').addEventListener('click', doExportPNG);
 
 /* ---------------- PSD 导入/导出 ---------------- */
 
-function loadDocumentFromPSD(psd) {
+function loadDocumentFromPSD(psd, meta = {}) {
   layers.reset(psd.width, psd.height);
   if (psd.layers.length > 0) {
     // PSD 文件中图层是「顶层在前」，内部栈是「底层在前」→ 倒序推入
@@ -380,22 +413,49 @@ function loadDocumentFromPSD(psd) {
   engine.resize();
   engine.fit();
   updateStatus();
+  addRecent({
+    name: meta.name || '未命名.psd',
+    path: meta.path || null,
+    w: psd.width,
+    h: psd.height,
+  });
+  hideHome();
 }
 
-function openPSDFile(file) {
+function openPSDFile(file, path = null) {
   file.arrayBuffer().then(buf => {
     try {
       const psd = readPSD(buf);
-      loadDocumentFromPSD(psd);
+      loadDocumentFromPSD(psd, { name: file.name, path });
     } catch (err) {
       alert('PSD 读取失败：' + err.message);
     }
   });
 }
 
-document.getElementById('btn-open').addEventListener('click', () => {
+// 桌面端走原生打开对话框（能拿到真实路径，最近文件可一键重开）；Web 预览回退到 file input
+async function openPSDDialog() {
+  if (TAURI && TAURI.dialog && TAURI.fs) {
+    try {
+      const path = await TAURI.dialog.open({
+        multiple: false,
+        filters: [{ name: 'Photoshop 文档', extensions: ['psd'] }],
+      });
+      if (!path) return;
+      const bytes = await TAURI.fs.readFile(path);
+      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      const psd = readPSD(buf);
+      const name = path.split(/[\\/]/).pop();
+      loadDocumentFromPSD(psd, { name, path });
+    } catch (err) {
+      alert('PSD 读取失败：' + err.message);
+    }
+    return;
+  }
   document.getElementById('file-open').click();
-});
+}
+
+document.getElementById('btn-open').addEventListener('click', openPSDDialog);
 document.getElementById('file-open').addEventListener('change', (e) => {
   const f = e.target.files[0];
   if (f) openPSDFile(f);
@@ -423,7 +483,8 @@ if (TAURI && TAURI.event) {
         const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
         if (/\.psd$/i.test(p)) {
           const psd = readPSD(buf);
-          loadDocumentFromPSD(psd);
+          const name = p.split(/[\\/]/).pop();
+          loadDocumentFromPSD(psd, { name, path: p });
         } else {
           importABRBuffer(buf);
         }
@@ -466,6 +527,8 @@ document.getElementById('btn-save-psd').addEventListener('click', doExportPSD);
 
 /* ---------------- 新建文档 / 缩放 ---------------- */
 
+let untitledCount = 0;
+
 function newDocument(w, h) {
   layers.reset(w, h);
   const paper = layers._create('纸张');
@@ -483,6 +546,8 @@ function newDocument(w, h) {
   engine.resize();
   engine.fit();
   updateStatus();
+  addRecent({ name: `未命名 ${++untitledCount}`, w, h });
+  hideHome();
 }
 
 function zoomCenter(factor) {
@@ -490,18 +555,51 @@ function zoomCenter(factor) {
   updateStatus();
 }
 
+/* ---------------- 首页 ---------------- */
+
+homeApi = createHome({
+  hasDocument: () => true,
+  onCreateDoc: (w, h) => newDocument(w, h),
+  onNewDialog: () => newDocDialog(settings, (w, h) => newDocument(w, h)),
+  onOpenPSD: () => openPSDDialog(),
+  onImportABR: () => document.getElementById('file-abr').click(),
+  onOpenRecent: async (r) => {
+    if (r.path && TAURI && TAURI.fs) {
+      try {
+        const bytes = await TAURI.fs.readFile(r.path);
+        const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        loadDocumentFromPSD(readPSD(buf), { name: r.name, path: r.path });
+      } catch (err) {
+        toast('无法打开：' + err.message + '（文件可能已移动）');
+      }
+    } else {
+      toast('浏览器预览无法直接重开本地文件，请用「打开 PSD」重新选择');
+    }
+  },
+  onClose: () => hideHome(),
+});
+
+document.getElementById('btn-home').addEventListener('click', () => {
+  if (homeApi) homeApi.show();
+});
+
 /* ---------------- 菜单栏 ---------------- */
 
 initMenuBar({
   about: aboutDialog,
-  newDoc: () => newDocDialog(settings, newDocument),
-  openPSD: () => document.getElementById('file-open').click(),
+  home: () => homeApi && homeApi.show(),
+  newDoc: () => newDocDialog(settings, (w, h) => newDocument(w, h)),
+  openPSD: () => openPSDDialog(),
   exportPNG: doExportPNG,
   exportPSD: doExportPSD,
   importABR: () => document.getElementById('file-abr').click(),
   undo: () => { history.undo(); refreshThumbs(); updateStatus(); },
   redo: () => { history.redo(); refreshThumbs(); updateStatus(); },
-  clearLayer: () => document.getElementById('btn-clear').click(),
+  clearLayer: clearActiveLayer,
+  layerNew: () => document.getElementById('btn-layer-add').click(),
+  layerDelete: () => document.getElementById('btn-layer-del').click(),
+  layerUp: () => document.getElementById('btn-layer-up').click(),
+  layerDown: () => document.getElementById('btn-layer-down').click(),
   zoomIn: () => zoomCenter(1.25),
   zoomOut: () => zoomCenter(0.8),
   resetView: () => { engine.fit(); updateStatus(); },
@@ -551,6 +649,7 @@ function beginStroke(e) {
   const p = engine.screenToWorld(e.offsetX, e.offsetY);
   const pressure = getPressure(e);
   state.last = { ...p, pressure };
+  state.smoothPoint = { x: p.x, y: p.y };
   state.spacingLeft = 0;
   stampAt(p.x, p.y, pressure);
   engine.render();
@@ -561,7 +660,15 @@ function continueStroke(e) {
   const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
   const preset = BrushRegistry.get(activeBrushType());
   for (const ev of events) {
-    const p = engine.screenToWorld(ev.offsetX, ev.offsetY);
+    const raw = engine.screenToWorld(ev.offsetX, ev.offsetY);
+    let p = raw;
+    // 防抖：对指针位置做指数平滑，数值越大越稳（略滞后）
+    if (state.smoothing > 0.001 && state.smoothPoint) {
+      const a = 1 - state.smoothing * 0.88;   // 0 → 1（无平滑），1 → 0.12（强平滑）
+      state.smoothPoint.x += (raw.x - state.smoothPoint.x) * a;
+      state.smoothPoint.y += (raw.y - state.smoothPoint.y) * a;
+      p = { x: state.smoothPoint.x, y: state.smoothPoint.y };
+    }
     const pressure = getPressure(ev);
     const last = state.last;
 
@@ -623,6 +730,7 @@ function endPointer() {
   if (state.drawing) {
     state.drawing = false;
     state.last = null;
+    state.smoothPoint = null;
     refreshThumbs();
     updateStatus();
   }
@@ -645,6 +753,8 @@ canvas.addEventListener('wheel', (e) => {
 
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  // 首页显示时不响应绘画快捷键
+  if (homeApi && homeApi.visible) return;
   if (e.code === 'Space') {
     state.spaceDown = true;
     canvas.classList.add('panning');
@@ -688,4 +798,7 @@ window.addEventListener('resize', () => engine.resize());
 renderLayerPanel();
 engine.resize();
 engine.fit();
+refreshOptionsBarTool();
 updateStatus();
+// 启动先进首页（显示最近文件 / 新建 / 预设）；?nohome=1 可跳过（用于截图/调试）
+if (!/[?&]nohome=1/.test(location.search)) homeApi.show();

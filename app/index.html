@@ -10,24 +10,44 @@
   <!-- 菜单栏（PS 风格） -->
   <nav id="menubar"></nav>
 
-  <!-- 顶部细条：品牌 + 全局操作 -->
-  <header id="topbar">
-    <div class="brand">
-      <span class="brand-cn">落笔生花</span>
-      <span class="brand-en">Luobishenghua</span>
+  <!-- 属性栏（PS 的「工具选项栏」）：随当前工具显示参数 -->
+  <header id="optionsbar">
+    <div class="opt-tool">
+      <i id="opt-tool-icon">✏</i>
+      <span id="opt-tool-name">画笔</span>
     </div>
-    <div class="top-actions">
+    <span class="opt-sep"></span>
+
+    <label class="opt">粗细
+      <input type="range" id="brush-size" min="1" max="200" value="24">
+      <span class="val" id="brush-size-val">24</span>
+    </label>
+    <label class="opt">不透明度
+      <input type="range" id="brush-opacity" min="5" max="100" value="100">
+      <span class="val" id="brush-opacity-val">100%</span>
+    </label>
+    <label class="opt" title="防抖：数值越大线条越平滑，但会略微滞后">防抖
+      <input type="range" id="brush-smoothing" min="0" max="100" value="0">
+      <span class="val" id="brush-smoothing-val">0%</span>
+    </label>
+    <span class="opt-sep"></span>
+    <label class="opt" title="当前前景色">颜色
+      <span id="color-chip"></span>
+    </label>
+
+    <div class="opt-right">
+      <button id="btn-home" title="返回首页">首页</button>
+      <span class="sep"></span>
       <button id="btn-undo" title="撤销 (Cmd+Z)">↩</button>
       <button id="btn-redo" title="重做 (Cmd+Shift+Z)">↪</button>
       <span class="sep"></span>
       <button id="btn-rotate-left" title="逆时针旋转 15°">⟲</button>
       <button id="btn-rotate-right" title="顺时针旋转 15°">⟳</button>
-      <button id="btn-reset-view" title="复位视图 (0)">复位视图</button>
+      <button id="btn-reset-view" title="复位视图 (0)">复位</button>
       <span id="zoom-label">100%</span>
       <span class="sep"></span>
       <button id="btn-open" title="打开 PSD 文件（也可直接拖入窗口）">打开 PSD</button>
       <button id="btn-save-psd" title="导出为 PSD（分层）">导出 PSD</button>
-      <button id="btn-clear" title="清空当前图层">清空</button>
       <button id="btn-save" class="primary" title="导出 PNG">导出 PNG</button>
     </div>
     <input type="file" id="file-open" accept=".psd" style="display:none">
@@ -46,24 +66,6 @@
             <button data-tool="brush" class="active"><i>✏</i> 画笔 <kbd>B</kbd></button>
             <button data-tool="eraser"><i>◻</i> 橡皮 <kbd>E</kbd></button>
             <button data-tool="hand"><i>✋</i> 抓手 <kbd>H</kbd></button>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel" data-panel="tool-props" data-dock="left">
-        <div class="panel-title"><span class="grip"></span><span class="name">工具属性</span><button class="panel-collapse" title="折叠">–</button></div>
-        <div class="panel-body">
-          <label class="prop-row">粗细
-            <input type="range" id="brush-size" min="1" max="200" value="24">
-            <span id="brush-size-val">24</span>
-          </label>
-          <label class="prop-row">不透明度
-            <input type="range" id="brush-opacity" min="5" max="100" value="100">
-            <span id="brush-opacity-val">100%</span>
-          </label>
-          <div class="prop-row color-row">
-            <span>当前色</span>
-            <span id="color-chip"></span>
           </div>
         </div>
       </section>
@@ -120,7 +122,7 @@
             <button id="btn-layer-down" title="下移一层">↓</button>
           </div>
           <div id="layer-list"></div>
-          <div class="panel-hint">双击图层名可重命名 · 双击行尾眼睛切换显隐</div>
+          <div class="panel-hint">双击图层名可重命名</div>
         </div>
       </section>
 
@@ -131,8 +133,63 @@
     <span id="status-doc">画布 1600 × 1600</span>
     <span id="status-brush"></span>
     <span id="status-pressure">压感: —</span>
-    <span class="hint">拖动面板标题栏可移动 · 拖到左右边缘磁吸停靠 · 空格/H 抓手 · 捏合缩放 · [ ] 调粗细</span>
+    <span class="hint">拖动标题栏可移动面板 · 拖到左右边缘贴合停靠 · 空格/H 抓手 · [ ] 调粗细</span>
   </footer>
+
+  <!-- 首页 / 欢迎页 -->
+  <div id="home" class="hidden">
+    <div class="home-top">
+      <div class="home-logo">墨</div>
+      <div class="home-brand">
+        <h1>落笔生花</h1>
+        <p>LUOBISHENGHUA · 专为绘画打造</p>
+      </div>
+      <div class="home-spacer"></div>
+      <button class="home-close" id="home-close">返回画布</button>
+    </div>
+
+    <div class="home-grid">
+      <div>
+        <div class="home-section">
+          <h2>开始</h2>
+          <div class="home-actions">
+            <button class="home-action primary" id="home-new">
+              <span class="ic">＋</span>
+              <span class="t">新建画布</span>
+              <span class="d">自定义尺寸与预设</span>
+            </button>
+            <button class="home-action" id="home-open">
+              <span class="ic">📂</span>
+              <span class="t">打开 PSD</span>
+              <span class="d">继续编辑已有文档</span>
+            </button>
+            <button class="home-action" id="home-abr">
+              <span class="ic">🖌</span>
+              <span class="t">导入 .abr 笔刷</span>
+              <span class="d">接入 Photoshop 笔刷</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="home-section">
+          <h2>画布预设</h2>
+          <div class="preset-grid" id="preset-grid"></div>
+        </div>
+      </div>
+
+      <div class="home-section">
+        <h2>最近文件</h2>
+        <div class="recent-list" id="recent-list"></div>
+      </div>
+    </div>
+
+    <div class="home-foot">
+      <span>落笔生花 Luobishenghua · beta4</span>
+      <span>WorkBuddy × likeweixue</span>
+    </div>
+  </div>
+
+  <div id="toast"></div>
 
   <script type="module" src="js/main.js"></script>
 
