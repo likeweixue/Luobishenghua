@@ -43,6 +43,38 @@ function compPx(stack, x, y) {
   return px(ctx, x, y);
 }
 
+// 在蒙版上擦一块（destination-out = 隐藏）
+function maskErase(mask, x, y, w, h) {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, w);
+  c.height = Math.max(1, h);
+  const cc = c.getContext('2d');
+  cc.fillStyle = '#000000';
+  cc.fillRect(0, 0, c.width, c.height);
+  mask.surface.drawCanvas(c, x, y, { composite: 'destination-out' });
+}
+
+function maskEraseCircle(mask, cx, cy, r) {
+  const c = document.createElement('canvas');
+  c.width = c.height = r * 2;
+  const cc = c.getContext('2d');
+  cc.fillStyle = '#000000';
+  cc.beginPath();
+  cc.arc(r, r, r, 0, Math.PI * 2);
+  cc.fill();
+  mask.surface.drawCanvas(c, cx - r, cy - r, { composite: 'destination-out' });
+}
+
+// PSD 节点现在是通道平面，直接从平面读像素
+function planePx(node, x, y) {
+  const p = node.planes || {};
+  const lx = x - (node.left || 0);
+  const ly = y - (node.top || 0);
+  if (lx < 0 || ly < 0 || lx >= (node.width || 0) || ly >= (node.height || 0)) return [0, 0, 0, 0];
+  const i = ly * node.width + lx;
+  return [p[0] ? p[0][i] : 0, p[1] ? p[1][i] : 0, p[2] ? p[2][i] : 0, p[-1] ? p[-1][i] : 255];
+}
+
 const isRed = p => p[0] > 180 && p[1] < 110 && p[2] < 110;
 const isGreen = p => p[1] > 120 && p[0] < 110 && p[2] < 130;
 const isBlue = p => p[2] > 150 && p[0] < 110;
@@ -68,12 +100,7 @@ async function run() {
   /* ================= 2. 图层蒙版 ================= */
   s.setActive(base.id);
   s.addMask(base.id);
-  const mctx = base.mask.ctx;
-  mctx.globalCompositeOperation = 'destination-out';
-  mctx.beginPath();
-  mctx.arc(25, 25, 8, 0, Math.PI * 2);
-  mctx.fill();
-  mctx.globalCompositeOperation = 'source-over';
+  maskEraseCircle(base.mask, 25, 25, 8);
 
   p = compPx(s, 25, 25);
   check(isWhite(p) || p[3] === 0, '蒙版挖洞处被隐藏（剪贴层也随之隐藏）', p + '');
@@ -157,9 +184,7 @@ async function run() {
   a.name = '底色';
   paintLayer(a, '#e24b4a', 5, 5, 30, 30);
   ps.addMask(a.id);
-  a.mask.ctx.globalCompositeOperation = 'destination-out';
-  a.mask.ctx.fillRect(20, 0, 44, 64);
-  a.mask.ctx.globalCompositeOperation = 'source-over';
+  maskErase(a.mask, 20, 0, 44, 64);
 
   const b = ps.addLayer();
   b.name = '剪贴层';
@@ -193,16 +218,74 @@ async function run() {
   check(pGroup && pGroup.children.length === 1, 'PSD 组内 1 个子层', pGroup ? pGroup.children.length + '' : '');
   check(pGroup && pGroup.children[0].name === '组内层', 'PSD 组内层名称正确');
 
-  const pMasked = parsed.nodes.find(n => n.maskCanvas);
-  check(!!pMasked, 'PSD 读到蒙版');
-  check(pMasked && pMasked.maskCanvas.getContext('2d').getImageData(30, 10, 1, 1).data[3] === 0,
-        'PSD 蒙版像素正确（右侧被遮）');
+  const pMasked = parsed.nodes.find(n => n.maskPlane);
+  check(!!pMasked, 'PSD 读到蒙版（通道平面）');
+  const mo = pMasked && pMasked.maskRect;
+  const mIdx = mo ? (10 - mo.y) * mo.w + (30 - mo.x) : -1;
+  check(!!pMasked && mIdx >= 0 && pMasked.maskPlane[mIdx] === 0,
+        'PSD 蒙版像素正确（右侧被遮）', pMasked && pMasked.maskPlane[mIdx]);
 
   const pClipped = parsed.nodes.find(n => n.clipping);
   check(!!pClipped, 'PSD 读到剪贴标记');
 
   const aBack = parsed.nodes.find(n => n.name === '底色');
-  check(!!aBack && isRed(px(aBack.canvas, 10, 10)), 'PSD 图层像素正确');
+  check(!!aBack && isRed(planePx(aBack, 10, 10)), 'PSD 图层像素正确（通道平面）');
+
+  /* ================= 7. 蒙版稀疏化（瓦片） ================= */
+  const ms2 = new LayerStack(1024, 768);
+  const ml = ms2.active;
+  paintLayer(ml, '#e24b4a', 0, 0, 1024, 768);
+  ms2.addMask(ml.id);
+  check(ml.mask.surface.tileCount === 0, '新建蒙版不分配瓦片（默认全显示）');
+  check(ms2.maskBytes() === 0, '全显示蒙版内存为 0', ms2.maskBytes() + '');
+  check(isRed(compPx(ms2, 500, 400)), '全显示蒙版不遮挡内容');
+
+  // 只在 100,100 附近擦一块 → 只分配 1 个瓦片
+  maskEraseCircle(ml.mask, 100, 100, 30);
+  check(ml.mask.surface.tileCount === 1, '画一笔蒙版只分配 1 个瓦片', ml.mask.surface.tileCount);
+  check(ms2.maskBytes() < 1024 * 768 * 4 * 0.2, '蒙版内存远小于整层', ms2.maskBytes() + '');
+  check(compPx(ms2, 100, 100)[3] === 0 || isWhite(compPx(ms2, 100, 100)), '擦掉的区域被隐藏',
+    compPx(ms2, 100, 100) + '');
+  check(isRed(compPx(ms2, 500, 400)), '没碰过的区域仍然显示');
+
+  // 停用/启用
+  ms2.toggleMaskEnabled(ml.id);
+  check(isRed(compPx(ms2, 100, 100)), '停用蒙版后恢复显示');
+  ms2.toggleMaskEnabled(ml.id);
+
+  // 清空蒙版 → 回到全显示且零瓦片
+  ms2.clearMask(ml.id);
+  check(ml.mask.surface.tileCount === 0, '清空蒙版后瓦片归零');
+  check(isRed(compPx(ms2, 100, 100)), '清空蒙版后内容恢复');
+
+  // 反相：全显示 → 全隐藏
+  ms2.invertMask(ml.id);
+  check(ml.mask.surface.tileCount > 0, '反相后蒙版被物化（全隐藏）', ml.mask.surface.tileCount);
+  const invComp = compPx(ms2, 500, 400);
+  check(invComp[3] === 0 || isWhite(invComp), '反相后整层被隐藏', invComp + '');
+
+  // 蒙版上的笔画可撤销
+  const mh = new History({ render() {} }, ms2, 50);
+  ms2.clearMask(ml.id);
+  const mj = mh.beginStroke(ml.id, 'mask');
+  mj.captureBefore(300, 300, 20);
+  maskEraseCircle(ml.mask, 300, 300, 15);
+  mh.commitStroke(mj, '擦蒙版');
+  const afterErase = compPx(ms2, 300, 300);
+  mh.undo();
+  check(isRed(compPx(ms2, 300, 300)), '撤销蒙版笔画后恢复显示', compPx(ms2, 300, 300) + '');
+  check(afterErase[3] === 0 || isWhite(afterErase), '（对照）擦除后确实不可见', afterErase + '');
+
+  /* ================= 8. PSD 导入的蒙版也是稀疏的 ================= */
+  const s3 = new LayerStack(64, 64);
+  s3.layers = [];
+  s3.layers = s3.importNodes(parsed.nodes);
+  const importedMask = s3.leaves().find(l => l.mask);
+  check(!!importedMask, 'PSD 蒙版导入成功');
+  check(importedMask && importedMask.mask.surface.tileCount <= 1,
+    'PSD 蒙版只占少量瓦片（64×64 → ≤1）', importedMask && importedMask.mask.surface.tileCount);
+  const impLayer = s3.leaves().find(l => l.name === '底色');
+  check(!!impLayer && isRed(px(impLayer, 10, 10)), 'PSD 图层像素进了瓦片', impLayer && px(impLayer, 10, 10) + '');
 
   const text = out.join('\n');
   document.getElementById('out').textContent = text + `\n\n结果：${pass} 通过 / ${fail} 失败`;

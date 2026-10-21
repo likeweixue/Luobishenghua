@@ -42,7 +42,7 @@ function block(nd, color, x, y, w, h) {
   });
 }
 
-function makeStack(w, h, n, dense) {
+function makeStack(w, h, n, dense, withMask) {
   const s = new LayerStack(w, h);
   for (let i = 1; i < n; i++) s.addLayer();
   let i = 0;
@@ -51,7 +51,22 @@ function makeStack(w, h, n, dense) {
     i++;
     const color = `hsl(${(i * 37) % 360},60%,50%)`;
     if (dense) wash(nd, color, 0.12);
-    block(nd, dense ? '#222' : color, 20 + (i * 37) % (w - 320), 20 + (i * 53) % (h - 220), 300, 200);
+    const bx = 20 + (i * 37) % (w - 320);
+    const by = 20 + (i * 53) % (h - 220);
+    block(nd, dense ? '#222' : color, bx, by, 300, 200);
+
+    if (withMask) {
+      // 每层一个蒙版，只在很小一块上擦除 → 只占 1 个瓦片
+      s.addMask(nd.id);
+      const c = document.createElement('canvas');
+      c.width = c.height = 80;
+      const cc = c.getContext('2d');
+      cc.fillStyle = '#000';
+      cc.beginPath();
+      cc.arc(40, 40, 36, 0, Math.PI * 2);
+      cc.fill();
+      nd.mask.surface.drawCanvas(c, bx + 60, by + 40, { composite: 'destination-out' });
+    }
   });
   walk(s.layers);
   return s;
@@ -122,15 +137,16 @@ async function run() {
     { w: 2048, h: 2048, layers: 50, dense: true },
     { w: 4000, h: 4000, layers: 20, dense: false },
     { w: 4000, h: 4000, layers: 50, dense: false },
+    { w: 4000, h: 4000, layers: 20, dense: false, masks: true },
   ];
 
-  log('尺寸         图层  像素内存(实测)  瓦片数  整屏合成(avg/p95)  视图重绘(avg/p95)  笔画帧(avg/p95)  撤销KB');
-  log('─'.repeat(112));
+  log('尺寸         图层  蒙版  像素内存(实测)  瓦片数  整屏合成(avg/p95)  视图重绘(avg/p95)  笔画帧(avg/p95)  撤销KB');
+  log('─'.repeat(120));
 
   for (const c of cases) {
     const theoretical = (c.w * c.h * 4 * (c.layers + 1)) / 1024 / 1024;
     try {
-      const stack = makeStack(c.w, c.h, c.layers, c.dense);
+      const stack = makeStack(c.w, c.h, c.layers, c.dense, c.masks);
       engine.layers = stack;
       engine.setDocSize(c.w, c.h);
       setView(c.w, c.h);
@@ -141,6 +157,7 @@ async function run() {
       log(
         `${c.w}×${c.h}`.padEnd(13) +
         String(c.layers).padEnd(6) +
+        (c.masks ? `${(stack.maskBytes() / 1024 / 1024).toFixed(0)}MB` : '—').padEnd(6) +
         `${mb(realBytes)}`.padEnd(16) +
         String(stack.tileCount()).padEnd(8) +
         `${fmt(r.avg)} / ${fmt(r.p95)}`.padEnd(20) +
@@ -148,7 +165,8 @@ async function run() {
         `${fmt(s.avg)} / ${fmt(s.p95)}`.padEnd(18) +
         String(s.histKB)
       );
-      log(`               └ 整层画布方案需要 ${theoretical.toFixed(0)} MB，瓦片实际 ${mb(realBytes)}`);
+      log(`               └ 整层画布方案需要 ${theoretical.toFixed(0)} MB（不含蒙版），瓦片实际 ${mb(realBytes)}` +
+        (c.masks ? `；蒙版 ${mb(stack.maskBytes())}，若用整层蒙版再加 ${(c.layers * c.w * c.h * 4 / 1024 / 1024).toFixed(0)} MB` : ''));
 
       // 释放
       engine.layers = null;
@@ -165,7 +183,7 @@ async function run() {
   }
 
   log('');
-  log('说明：dense 组每层整层铺色（最坏情况）；4000² 组只在局部画一块（真实图层常见形态）。');
+  log('说明：dense 组每层整层铺色（最坏情况）；4000² 组只在局部画一块（真实图层常见形态）；最后一行每层带一个只擦了一小块的蒙版。');
   log('整屏合成 = 图层变化后的全量合成；视图重绘 = 平移/缩放（不重新合成）；笔画帧 = 单笔尖（瓦片快照 + 脏矩形渲染）。');
   document.title = 'BENCH DONE';
 }

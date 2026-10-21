@@ -70,12 +70,19 @@ assert(bottom.visible === false, '隐藏标记一致');
 assert(Math.abs(bottom.opacity - 0.5) < 0.01, '不透明度一致: ' + bottom.opacity);
 assert(top.blend === 'multiply', '混合模式一致: ' + top.blend);
 
-// 像素校验（顶层 seed=1）
+// 像素校验（顶层 seed=1）：readPSD 现在直接返回通道平面，不再建整层画布
 const src = makeLayer(1).data;
-const got = top.canvas._img.data;
 let diff = 0;
-for (let i = 0; i < src.length; i++) if (src[i] !== got[i]) diff++;
-assert(diff === 0, `像素完全一致（差异字节 ${diff}）`);
+for (let i = 0; i < W * H; i++) {
+  if (top.planes[0][i] !== src[i * 4]) diff++;
+  if (top.planes[1][i] !== src[i * 4 + 1]) diff++;
+  if (top.planes[2][i] !== src[i * 4 + 2]) diff++;
+  if (top.planes[-1][i] !== src[i * 4 + 3]) diff++;
+}
+assert(diff === 0, `像素完全一致（通道平面差异字节 ${diff}）`);
+assert(top.width === W && top.height === H && top.left === 0 && top.top === 0,
+  `图层 Rect 正确 ${top.left},${top.top} ${top.width}×${top.height}`);
+assert(!top.canvas, '不再返回整层画布（内存优化）');
 
 console.log(ok ? '\n全部通过 ✅' : '\n存在失败 ❌');
 process.exit(ok ? 0 : 1);

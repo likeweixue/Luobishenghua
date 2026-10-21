@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>ENGINE TEST</title>
+<style>canvas{width:400px;height:300px}</style></head>
+<body>
+<pre id="out">running…</pre>
+<canvas id="cv" width="400" height="300"></canvas>
+<script type="module">
+import { Engine } from './app/js/engine.js';
+import { LayerStack } from './app/js/layers.js';
+
+const out = [];
+let pass = 0, fail = 0;
+const check = (c, label, extra = '') => {
+  if (c) { pass++; out.push('✅ ' + label); }
+  else { fail++; out.push('❌ ' + label + (extra ? ' — ' + extra : '')); }
+};
+const isColor = (p, r, g, b, a = 255) =>
+  Math.abs(p[0] - r) < 6 && Math.abs(p[1] - g) < 6 && Math.abs(p[2] - b) < 6 && Math.abs(p[3] - a) < 6;
+const RED = [192, 57, 43], GREEN = [29, 158, 117], BG = [244, 239, 230];
+
+function fillLayer(l, color, x, y, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const cc = c.getContext('2d');
+  cc.fillStyle = color;
+  cc.fillRect(0, 0, w, h);
+  l.surface.putCanvas(c, x, y);
+}
+
+try {
+  const cv = document.getElementById('cv');
+  const engine = new Engine(cv, 400, 300);
+  engine.resize();
+
+  const docPx = (x, y) => {
+    const d = engine.doc.getContext('2d').getImageData(x, y, 1, 1).data;
+    return [d[0], d[1], d[2], d[3]];
+  };
+
+  /* ---------- 场景一：剪贴基底正好是激活层（旧缓存 bug） ---------- */
+  const L = new LayerStack(400, 300);
+  engine.layers = L;
+  engine.setDocSize(400, 300);
+
+  const bg = L.active;
+  fillLayer(bg, '#f4efe6', 0, 0, 400, 300);
+
+  const base = L.addLayer();
+  fillLayer(base, '#c0392b', 50, 50, 120, 100);
+
+  const clip = L.addLayer();
+  fillLayer(clip, '#1d9e75', 0, 0, 400, 300);   // 整层铺满
+  L.toggleClipping(clip.id);
+
+  L.setActive(base.id);          // 基底是激活层 → 走 below/above 缓存
+  engine.invalidateCompositeCaches();
+  engine.render();
+
+  check(isColor(docPx(80, 80), ...GREEN), '剪贴层在基底内显示（激活层=基底）', docPx(80, 80) + '');
+  check(isColor(docPx(300, 250), ...BG), '剪贴层在基底外不显示（激活层=基底）', docPx(300, 250) + '');
+
+  /* ---------- 场景二：激活层在剪贴层之上（走 above 缓存） ---------- */
+  // 注意：addLayer 插在「激活层之上」，所以要先把激活层设到剪贴层，
+  // 否则新层会插到 基底 与 剪贴层 之间，剪贴基底就换人了
+  L.setActive(clip.id);
+  const top = L.addLayer();
+  fillLayer(top, '#378add', 300, 200, 60, 60);
+  engine.invalidateCompositeCaches();
+  engine.render();
+  check(isColor(docPx(80, 80), ...GREEN), '剪贴关系在 above 缓存里仍成立', docPx(80, 80) + '');
+  check(isColor(docPx(200, 260), ...BG), '基底外仍被裁掉（above 缓存）', docPx(200, 260) + '');
+  check(isColor(docPx(320, 220), 55, 138, 221), '上层内容正常显示', docPx(320, 220) + '');
+
+  /* ---------- 场景三：基底带蒙版 + 剪贴 ---------- */
+  L.setActive(base.id);
+  L.addMask(base.id);
+  const mc = document.createElement('canvas');
+  mc.width = mc.height = 60;
+  const mcc = mc.getContext('2d');
+  mcc.fillStyle = '#000';
+  mcc.beginPath();
+  mcc.arc(30, 30, 25, 0, Math.PI * 2);
+  mcc.fill();
+  base.mask.surface.drawCanvas(mc, 80, 80, { composite: 'destination-out' });
+
+  engine.invalidateCompositeCaches();
+  engine.render();
+  check(isColor(docPx(105, 105), ...BG), '蒙版洞穿透到背景（含剪贴层）', docPx(105, 105) + '');
+  check(isColor(docPx(70, 70), ...GREEN), '蒙版洞外仍显示剪贴层', docPx(70, 70) + '');
+
+  /* ---------- 场景四：脏矩形渲染与整屏渲染一致 ---------- */
+  engine.render();
+  const full = [docPx(70, 70), docPx(105, 105), docPx(300, 250), docPx(320, 220)];
+  engine.renderDirty({ x: 40, y: 40, w: 120, h: 120 });
+  const dirty = [docPx(70, 70), docPx(105, 105), docPx(300, 250), docPx(320, 220)];
+  check(JSON.stringify(full) === JSON.stringify(dirty), '脏矩形渲染结果与整屏一致',
+    JSON.stringify(full) + ' vs ' + JSON.stringify(dirty));
+
+  /* ---------- 场景五：只重绘视图（平移）不破坏画面 ---------- */
+  const beforeView = [docPx(70, 70), docPx(105, 105)];
+  engine.view.tx += 5;
+  engine._paperDirty = true;
+  engine.renderViewOnly();
+  const afterView = [docPx(70, 70), docPx(105, 105)];
+  check(JSON.stringify(beforeView) === JSON.stringify(afterView), '视图重绘不改动文档内容',
+    JSON.stringify(beforeView) + ' vs ' + JSON.stringify(afterView));
+
+  /* ---------- 场景六：隐藏激活层时的缓存路径 ---------- */
+  L.setActive(base.id);
+  L.setVisible(base.id, false);
+  engine.invalidateCompositeCaches();
+  engine.render();
+  check(isColor(docPx(70, 70), ...BG), '隐藏激活层后其内容消失', docPx(70, 70) + '');
+  L.setVisible(base.id, true);
+
+} catch (err) {
+  out.push('💥 异常：' + (err && err.stack ? err.stack : err));
+  fail++;
+}
+
+document.title = fail === 0 ? 'PASS' : 'FAIL';
+document.getElementById('out').textContent = `引擎合成测试：${pass} 通过 / ${fail} 失败\n\n` + out.join('\n');
+</script>
+</body>
+</html>

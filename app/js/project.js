@@ -4,6 +4,7 @@
 //   masks/NNN.png   蒙版（alpha 通道即蒙版值）
 //   thumb.png       首页/最近文件用缩略图
 // v1（扁平 layers 数组）仍可读取。
+import { maskToCanvas } from './tiles.js';
 import { zipWrite, zipRead } from './zip.js';
 
 export const PROJECT_EXT = 'lbsh';
@@ -58,7 +59,7 @@ async function collectNodes(nodes, files, counter) {
       };
       if (n.mask) {
         const file = `masks/${String(counter.mask++).padStart(3, '0')}.png`;
-        files.push({ name: file, data: await canvasToPng(n.mask.canvas) });
+        files.push({ name: file, data: await canvasToPng(maskToCanvas(n.mask.surface)) });
         g.mask = { file, enabled: n.mask.enabled !== false };
       }
       g.children = await collectNodes(n.children || [], files, counter);
@@ -80,7 +81,7 @@ async function collectNodes(nodes, files, counter) {
       };
       if (n.mask) {
         const mfile = `masks/${String(counter.mask++).padStart(3, '0')}.png`;
-        files.push({ name: mfile, data: await canvasToPng(n.mask.canvas) });
+        files.push({ name: mfile, data: await canvasToPng(maskToCanvas(n.mask.surface)) });
         d.mask = { file: mfile, enabled: n.mask.enabled !== false };
       }
       out.push(d);

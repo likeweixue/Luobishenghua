@@ -11,11 +11,54 @@ export const TILE_SIZE = 256;
 
 const key = (tx, ty) => tx + ',' + ty;
 
+// 复用一张 1×1 画布来 createImageData，避免每次分配上下文
+let _scratchCtx = null;
+function scratchCtx() {
+  if (!_scratchCtx) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 1;
+    _scratchCtx = c.getContext('2d');
+  }
+  return _scratchCtx;
+}
+
+/* ---------------- 蒙版工具（默认全显示 = 未分配瓦片） ---------------- */
+
+/** 导出一张「有效蒙版」画布：白底 + 瓦片内容（用于 PNG / PSD 保存） */
+export function maskToCanvas(surface) {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, surface.w);
+  c.height = Math.max(1, surface.h);
+  const ctx = c.getContext('2d');
+  // 默认全显示 = 不透明白
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  // 有瓦片的地方必须「替换」而不是叠加：叠加会把 alpha=0 的孔洞重新变成不透明
+  for (const t of surface.tiles.values()) {
+    const r = surface.tileRect(t.tx, t.ty);
+    ctx.clearRect(r.x, r.y, r.w, r.h);
+    ctx.drawImage(t.canvas, r.x, r.y);
+  }
+  return c;
+}
+
+/** 从整层蒙版画布建瓦片：保留「被遮住」的瓦片，跳过全白瓦片 */
+export function maskFromCanvas(canvas, w, h) {
+  const s = new TileSurface(w, h, TILE_SIZE, { blank: '#ffffff' });
+  s.fromCanvas(canvas, { skipEmpty: false, skipFull: true });
+  return s;
+}
+
 export class TileSurface {
-  constructor(w, h, ts = TILE_SIZE) {
+  /**
+   * @param blank 新建瓦片时的底色（默认透明）。蒙版用 '#ffffff'：
+   *              没被碰过的区域等于「全显示」，只有画过的瓦片才存在。
+   */
+  constructor(w, h, ts = TILE_SIZE, { blank = null } = {}) {
     this.w = w;
     this.h = h;
     this.ts = ts;
+    this.blank = blank;
     this.tiles = new Map();   // "tx,ty" -> { canvas, ctx, tx, ty }
     this._bbox = null;        // 惰性计算的包围盒
   }
@@ -53,7 +96,12 @@ export class TileSurface {
       const canvas = document.createElement('canvas');
       canvas.width = r.w;
       canvas.height = r.h;
-      t = { canvas, ctx: canvas.getContext('2d'), tx, ty };
+      const ctx = canvas.getContext('2d');
+      if (this.blank) {
+        ctx.fillStyle = this.blank;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      t = { canvas, ctx, tx, ty };
       this.tiles.set(k, t);
       this._bbox = null;
     }
@@ -261,7 +309,7 @@ export class TileSurface {
    * 用整层画布替换内容。逐瓦片扫描 alpha，全透明的瓦片直接跳过
    * （PSD 导入的图层经常只有一小块有像素）。
    */
-  fromCanvas(canvas, { skipEmpty = true } = {}) {
+  fromCanvas(canvas, { skipEmpty = true, skipFull = false } = {}) {
     this.clearAll();
     const sw = Math.min(canvas.width, this.w);
     const sh = Math.min(canvas.height, this.h);
@@ -280,6 +328,8 @@ export class TileSurface {
 
         if (!skipEmpty) {
           const t = this.getTile(tx, ty, true);
+          // 覆盖语义：先清掉这块（瓦片可能有白底），否则 alpha 会被底图吃掉
+          t.ctx.clearRect(0, 0, iw, ih);
           t.ctx.drawImage(canvas, r.x, r.y, iw, ih, 0, 0, iw, ih);
           continue;
         }
@@ -292,13 +342,129 @@ export class TileSurface {
         pctx.drawImage(canvas, r.x, r.y, iw, ih, 0, 0, iw, ih);
         const data = pctx.getImageData(0, 0, iw, ih).data;
         let hasPixel = false;
+        let fullPixel = true;
         for (let i = 3; i < data.length; i += 4) {
-          if (data[i] !== 0) { hasPixel = true; break; }
+          if (data[i] !== 0) {
+            hasPixel = true;
+            if (data[i] !== 255) fullPixel = false;
+          } else {
+            fullPixel = false;
+          }
+          if (hasPixel && !fullPixel) break;
         }
         if (!hasPixel) continue;
+        if (skipFull && fullPixel) continue;
 
         const t = this.getTile(tx, ty, true);
+        t.ctx.clearRect(0, 0, iw, ih);
         t.ctx.drawImage(probe, 0, 0);
+      }
+    }
+    this._bbox = null;
+  }
+
+  /* ---------------- 从 PSD 通道平面直接建瓦片 ---------------- */
+
+  /**
+   * 直接从通道平面写瓦片（PSD 导入用）。
+   * 避免「先建一张整层画布再扫描」的峰值内存，图层 Rect 之外完全不碰。
+   * @param planes { 0, 1, 2, -1: Uint8Array }  缺失的通道按 0 / 255 处理
+   * @param rect   { x, y, w, h }  图层在文档中的位置与尺寸（平面坐标原点对应该 rect）
+   */
+  fromPlanes(planes, rect) {
+    const { x, y, w, h } = rect;
+    if (w <= 0 || h <= 0) return;
+    const R = planes[0], G = planes[1], B = planes[2], A = planes[-1];
+    const rg = this.rangeOf(x, y, w, h);
+    if (!rg.valid) return;
+    const scratch = scratchCtx();
+
+    for (let ty = rg.ty0; ty <= rg.ty1; ty++) {
+      for (let tx = rg.tx0; tx <= rg.tx1; tx++) {
+        const r = this.tileRect(tx, ty);
+        const ix0 = Math.max(x, r.x);
+        const iy0 = Math.max(y, r.y);
+        const ix1 = Math.min(x + w, r.x + r.w);
+        const iy1 = Math.min(y + h, r.y + r.h);
+        const iw = ix1 - ix0;
+        const ih = iy1 - iy0;
+        if (iw <= 0 || ih <= 0) continue;
+
+        const img = scratch.createImageData(iw, ih);
+        const d = img.data;
+        let anyOpaque = false;
+        for (let yy = 0; yy < ih; yy++) {
+          const rowBase = (iy0 + yy - y) * w;
+          for (let xx = 0; xx < iw; xx++) {
+            const si = rowBase + (ix0 + xx - x);
+            const o = (yy * iw + xx) * 4;
+            const a = A ? A[si] : 255;
+            d[o] = R ? R[si] : 0;
+            d[o + 1] = G ? G[si] : 0;
+            d[o + 2] = B ? B[si] : 0;
+            d[o + 3] = a;
+            if (a !== 0) anyOpaque = true;
+          }
+        }
+        if (!anyOpaque) continue;   // 全透明瓦片不分配
+
+        const t = this.getTile(tx, ty, true);
+        t.ctx.putImageData(img, ix0 - r.x, iy0 - r.y);
+      }
+    }
+    this._bbox = null;
+  }
+
+  /**
+   * 从 PSD 的蒙版平面建瓦片：RGB 恒白，A = 蒙版值。
+   * 全 255（默认显示）的瓦片直接跳过 —— 蒙版的「没画过 = 全显示」由空白瓦片底色保证。
+   */
+  fromMaskPlane(plane, rect) {
+    const { x, y, w, h } = rect;
+    if (w <= 0 || h <= 0 || !plane) return;
+    const rg = this.rangeOf(x, y, w, h);
+    if (!rg.valid) return;
+    const scratch = scratchCtx();
+
+    for (let ty = rg.ty0; ty <= rg.ty1; ty++) {
+      for (let tx = rg.tx0; tx <= rg.tx1; tx++) {
+        const r = this.tileRect(tx, ty);
+        const ix0 = Math.max(x, r.x);
+        const iy0 = Math.max(y, r.y);
+        const ix1 = Math.min(x + w, r.x + r.w);
+        const iy1 = Math.min(y + h, r.y + r.h);
+        const iw = ix1 - ix0;
+        const ih = iy1 - iy0;
+        if (iw <= 0 || ih <= 0) continue;
+
+        const img = scratch.createImageData(iw, ih);
+        const d = img.data;
+        let allFull = true;
+        // 蒙版矩形之外是「全显示」，所以本瓦片里矩形外的像素也要按 255 处理
+        const tw = r.w;
+        const th = r.h;
+        for (let yy = 0; yy < th; yy++) {
+          const gy = r.y + yy;
+          const insideY = gy >= iy0 && gy < iy1;
+          for (let xx = 0; xx < tw; xx++) {
+            const gx = r.x + xx;
+            const insideX = gx >= ix0 && gx < ix1;
+            let a = 255;
+            if (insideX && insideY) {
+              a = plane[(gy - y) * w + (gx - x)];
+            }
+            if (a !== 255) allFull = false;
+            const o = (yy * tw + xx) * 4;
+            d[o] = 255;
+            d[o + 1] = 255;
+            d[o + 2] = 255;
+            d[o + 3] = a;
+          }
+        }
+        if (allFull) continue;
+
+        const t = this.getTile(tx, ty, true);
+        t.ctx.putImageData(img, 0, 0);
       }
     }
     this._bbox = null;

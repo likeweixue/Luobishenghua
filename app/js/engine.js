@@ -160,7 +160,9 @@ export class Engine {
     this._paperDirty = false;
   }
 
-  // 激活层在根层且不是剪贴层时，缓存「下方」和「上方」的合成结果
+  // 激活层在根层且不是剪贴层时，缓存「下方」和「上方」的合成结果。
+  // 注意：激活层如果是剪贴基底，紧跟其后的剪贴层必须一起留在中间层，
+  // 否则它们会被分到「上方」缓存里，失去基底裁剪（会被整片画出来）。
   _ensureCaches() {
     const layers = this.layers;
     if (!layers) return null;
@@ -168,8 +170,14 @@ export class Engine {
     if (!loc || loc.array !== layers.layers) return null;
     const node = layers.layers[loc.index];
     if (!node || node.type !== 'layer' || node.clipping) return null;
+
+    let to = loc.index;
+    while (to + 1 < layers.layers.length && layers.layers[to + 1].clipping) to++;
+
     if (this._caches
       && this._caches.activeId === node.id
+      && this._caches.from === loc.index
+      && this._caches.to === to
       && this._caches.w === layers.w
       && this._caches.h === layers.h) {
       return this._caches;
@@ -183,8 +191,10 @@ export class Engine {
     const below = mk();
     const above = mk();
     layers._renderNodes(layers.layers.slice(0, loc.index), below.getContext('2d'), 0);
-    layers._renderNodes(layers.layers.slice(loc.index + 1), above.getContext('2d'), 0);
-    this._caches = { below, above, activeId: node.id, w: layers.w, h: layers.h };
+    layers._renderNodes(layers.layers.slice(to + 1), above.getContext('2d'), 0);
+    this._caches = {
+      below, above, activeId: node.id, from: loc.index, to, w: layers.w, h: layers.h,
+    };
     return this._caches;
   }
 
@@ -196,7 +206,6 @@ export class Engine {
       this.layers.composite(dctx, { checkerboard: true });
       return;
     }
-    const node = this.layers.byId(caches.activeId);
     dctx.setTransform(1, 0, 0, 1, 0, 0);
     dctx.globalAlpha = 1;
     dctx.globalCompositeOperation = 'source-over';
@@ -204,10 +213,8 @@ export class Engine {
     dctx.fillStyle = this.layers._checkerPattern(dctx);
     dctx.fillRect(0, 0, this.layers.w, this.layers.h);
     dctx.drawImage(caches.below, 0, 0);
-    if (node && node.visible) {
-      // 直接按瓦片画激活层（含蒙版 / 不透明度 / 混合模式）
-      this.layers._drawNodeContent(dctx, node, 0);
-    }
+    // 激活层 + 挂在它上面的剪贴层作为一组渲染（保持裁剪关系）
+    this.layers._renderNodes(this.layers.layers.slice(caches.from, caches.to + 1), dctx, 0);
     dctx.drawImage(caches.above, 0, 0);
   }
 
@@ -232,11 +239,8 @@ export class Engine {
     dctx.fillStyle = this.layers._checkerPattern(dctx);
     dctx.fillRect(x, y, w, h);
     dctx.drawImage(caches.below, x, y, w, h, x, y, w, h);
-    const node = this.layers.byId(caches.activeId);
-    if (node && node.visible) {
-      // 已在脏区上做了 clip，这里直接画整层即可
-      this.layers._drawNodeContent(dctx, node, 0);
-    }
+    // 已在脏区上做过 clip，这里把激活组整组画一遍
+    this.layers._renderNodes(this.layers.layers.slice(caches.from, caches.to + 1), dctx, 0);
     dctx.drawImage(caches.above, x, y, w, h, x, y, w, h);
     dctx.restore();
   }

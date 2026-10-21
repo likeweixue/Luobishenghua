@@ -1,6 +1,8 @@
 // PSD 读写器：8-bit RGB/RGBA 子集（Raw + RLE PackBits 压缩）
 // 支持：分层读取（名称/显隐/不透明度/混合模式/位置）、分层写入、中文图层名（luni 块）
-// 不支持：16/32 位通道、CMYK/灰度、图层组（组内容会平铺为普通图层）、矢量/智能对象
+// 不支持：16/32 位通道、CMYK/灰度、矢量/智能对象
+
+import { maskToCanvas } from './tiles.js';
 
 const KEY_TO_BLEND = {
   'norm': 'source-over',
@@ -225,50 +227,21 @@ export function readPSD(buffer) {
         }
       }
 
-      // 组装图层画布与蒙版画布
+      // 只记录矩形信息：像素保留为通道平面，由图层栈直接建瓦片
+      // （避免「每层先建整层画布」的导入峰值内存）
       for (const rec of recs) {
         const isMarker = rec.lsct === 1 || rec.lsct === 2 || rec.lsct === 3;
-        if (isMarker) { rec.canvas = null; rec.maskCanvas = null; continue; }
-
-        const w = rec.right - rec.left;
-        const h = rec.bottom - rec.top;
-        if (w > 0 && h > 0) {
-          const canvas = document.createElement('canvas');
-          canvas.width = w;
-          canvas.height = h;
-          const img = new ImageData(w, h);
-          const d = img.data;
-          const R = rec.planes[0], G = rec.planes[1], B = rec.planes[2], A = rec.planes[-1];
-          for (let i = 0; i < w * h; i++) {
-            d[i * 4] = R ? R[i] : 0;
-            d[i * 4 + 1] = G ? G[i] : 0;
-            d[i * 4 + 2] = B ? B[i] : 0;
-            d[i * 4 + 3] = A ? A[i] : 255;
-          }
-          canvas.getContext('2d').putImageData(img, 0, 0);
-          rec.canvas = canvas;
-        }
-
-        if (rec.maskPlane && rec.mask) {
-          const mw = rec.maskW, mh = rec.maskH;
-          const tmp = document.createElement('canvas');
-          tmp.width = mw;
-          tmp.height = mh;
-          const img = new ImageData(mw, mh);
-          const d = img.data;
-          for (let i = 0; i < mw * mh; i++) {
-            d[i * 4] = 255;
-            d[i * 4 + 1] = 255;
-            d[i * 4 + 2] = 255;
-            d[i * 4 + 3] = rec.maskPlane[i];
-          }
-          tmp.getContext('2d').putImageData(img, 0, 0);
-
-          const mc = document.createElement('canvas');
-          mc.width = width;
-          mc.height = height;
-          mc.getContext('2d').drawImage(tmp, rec.mask.left, rec.mask.top);
-          rec.maskCanvas = mc;
+        if (isMarker) { rec.planes = null; rec.maskPlane = null; continue; }
+        rec.width = Math.max(0, rec.right - rec.left);
+        rec.height = Math.max(0, rec.bottom - rec.top);
+        if (rec.width === 0 || rec.height === 0) rec.planes = null;
+        if (rec.mask && rec.maskPlane) {
+          rec.maskRect = {
+            x: rec.mask.left,
+            y: rec.mask.top,
+            w: Math.max(0, rec.mask.right - rec.mask.left),
+            h: Math.max(0, rec.mask.bottom - rec.mask.top),
+          };
         }
       }
 
@@ -291,7 +264,8 @@ export function readPSD(buffer) {
               clipping: rec.clipping,
               expanded: rec.lsct === 1,
               children: frame.children,
-              maskCanvas: rec.maskCanvas,
+              maskPlane: rec.maskPlane,
+              maskRect: rec.maskRect,
               maskEnabled: rec.mask ? !rec.mask.disabled : true,
             });
           }
@@ -305,8 +279,13 @@ export function readPSD(buffer) {
             locked: false,
             lockAlpha: rec.lockAlpha,
             clipping: rec.clipping,
-            canvas: rec.canvas,
-            maskCanvas: rec.maskCanvas,
+            left: rec.left,
+            top: rec.top,
+            width: rec.width,
+            height: rec.height,
+            planes: rec.planes,
+            maskPlane: rec.maskPlane,
+            maskRect: rec.maskRect,
             maskEnabled: rec.mask ? !rec.mask.disabled : true,
           });
         }
@@ -316,7 +295,11 @@ export function readPSD(buffer) {
       // 兼容旧的扁平输出
       const walkFlat = (ns) => ns.forEach(n => {
         if (n.type === 'group') walkFlat(n.children || []);
-        else layers.push({ name: n.name, visible: n.visible, opacity: n.opacity, blend: n.blend, canvas: n.canvas, maskCanvas: n.maskCanvas });
+        else layers.push({
+          name: n.name, visible: n.visible, opacity: n.opacity, blend: n.blend,
+          left: n.left, top: n.top, width: n.width, height: n.height,
+          planes: n.planes, maskPlane: n.maskPlane, maskRect: n.maskRect,
+        });
       });
       walkFlat(nodes);
     }
@@ -421,8 +404,9 @@ export function writePSD({ width, height, nodes, layers, compositeImage }) {
       { id: 2, enc: encodeChannelRLE(planes[2], w, h) },
       { id: -1, enc: encodeChannelRLE(planes[3], w, h) },
     ];
-    if (n.mask && n.mask.canvas) {
-      const mImg = n.mask.canvas.getContext('2d').getImageData(0, 0, w, h);
+    if (n.mask && (n.mask.surface || n.mask.canvas)) {
+      const mc = n.mask.surface ? maskToCanvas(n.mask.surface) : n.mask.canvas;
+      const mImg = mc.getContext('2d').getImageData(0, 0, w, h);
       const alpha = new Uint8Array(w * h);
       const d = mImg.data;
       for (let i = 0; i < w * h; i++) alpha[i] = d[i * 4 + 3];

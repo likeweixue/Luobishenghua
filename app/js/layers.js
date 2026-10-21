@@ -2,16 +2,16 @@
 //
 // 节点结构：
 //   图层 { id, type:'layer', name, visible, opacity, blend, locked, lockAlpha,
-//          clipping, surface: TileSurface, mask: null | { canvas, ctx, enabled } }
+//          clipping, surface: TileSurface, mask: null | { surface: TileSurface, enabled } }
 //   组   { id, type:'group', name, visible, opacity, blend, locked,
 //          clipping, expanded, children: [] }
 //
 // 存储：像素存在 TileSurface（256×256 按需分配的瓦片）里，不再是整张画布。
-// 蒙版暂时仍是一张整画布（蒙版数量少，且默认全显示需要连续数据）。
+// 蒙版同样是瓦片，语义为「未分配的瓦片 = 全显示」，只有被遮住/画过的瓦片才占内存。
 //
 // 数组约定：同一层内 children[0] 在最下面，末尾在最上面（与 PSD 文件顺序一致）。
 
-import { TileSurface } from './tiles.js';
+import { TileSurface, maskFromCanvas } from './tiles.js';
 
 export class LayerStack {
   constructor(w, h) {
@@ -188,23 +188,56 @@ export class LayerStack {
         const g = this._createGroup(d.name || '组');
         this._applyDef(g, d);
         g.expanded = d.expanded !== false;
-        if (d.maskCanvas) {
-          g.mask = this._makeMaskFromCanvas(d.maskCanvas);
-          g.mask.enabled = d.maskEnabled !== false;
-        }
+        g.mask = this._maskFromDef(d);
         g.children = this.importNodes(d.children || []);
         return g;
       }
       const l = this._create(d.name || '图层');
       this._applyDef(l, d);
       l.lockAlpha = !!d.lockAlpha;
-      if (d.canvas) l.surface.putCanvas(d.canvas, d.left || 0, d.top || 0);
-      if (d.maskCanvas) {
-        l.mask = this._makeMaskFromCanvas(d.maskCanvas);
-        l.mask.enabled = d.maskEnabled !== false;
+      // 三种来源：PSD 通道平面（最省内存）/ 整层画布 / 已有 surface
+      if (d.surface) l.surface = d.surface;
+      else if (d.planes) {
+        l.surface.fromPlanes(d.planes, {
+          x: d.left || 0, y: d.top || 0,
+          w: d.width || this.w, h: d.height || this.h,
+        });
+      } else if (d.canvas) {
+        l.surface.putCanvas(d.canvas, d.left || 0, d.top || 0);
       }
+      l.mask = this._maskFromDef(d);
       return l;
     });
+  }
+
+  _maskFromDef(d) {
+    if (!d) return null;
+    let m = null;
+    if (d.maskSurface) {
+      m = { surface: d.maskSurface, enabled: d.maskEnabled !== false };
+    } else if (d.maskPlane && d.maskRect) {
+      const sfc = new TileSurface(this.w, this.h, undefined, { blank: '#ffffff' });
+      sfc.fromMaskPlane(d.maskPlane, d.maskRect);
+      m = { surface: sfc, enabled: d.maskEnabled !== false };
+    } else if (d.maskCanvas) {
+      m = this._makeMaskFromCanvas(d.maskCanvas);
+      m.enabled = d.maskEnabled !== false;
+    }
+    return m;
+  }
+
+  // 导出一张「有效蒙版」画布（白底 + 瓦片），供 PNG / PSD 保存用
+  maskCanvasOf(mask) {
+    if (!mask) return null;
+    const s = mask.surface;
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, this.w);
+    c.height = Math.max(1, this.h);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    if (s && !s.isEmpty()) s.drawInto(ctx);
+    return c;
   }
 
   _applyDef(n, d) {
@@ -216,11 +249,12 @@ export class LayerStack {
   }
 
   _makeMaskFromCanvas(src) {
-    const canvas = document.createElement('canvas');
-    canvas.width = this.w;
-    canvas.height = this.h;
-    canvas.getContext('2d').drawImage(src, 0, 0);
-    return { canvas, ctx: canvas.getContext('2d'), enabled: true };
+    // 白底 + 透明=遮住；全白瓦片会被跳过，所以「全显示」的蒙版几乎不占内存
+    return { surface: maskFromCanvas(src, this.w, this.h), enabled: true };
+  }
+
+  _makeMask() {
+    return { surface: new TileSurface(this.w, this.h, undefined, { blank: '#ffffff' }), enabled: true };
   }
 
   /* ---------------- 结构操作 ---------------- */
@@ -398,14 +432,8 @@ export class LayerStack {
   addMask(id = this.activeId) {
     const n = this.byId(id);
     if (!n || n.mask) return false;
-    const canvas = document.createElement('canvas');
-    canvas.width = this.w;
-    canvas.height = this.h;
-    const ctx = canvas.getContext('2d');
-    // 蒙版用 alpha 通道表达：全白 = 全显示
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, this.w, this.h);
-    n.mask = { canvas, ctx, enabled: true };
+    // 空白瓦片底色为白 = 全显示，不分配任何瓦片
+    n.mask = this._makeMask();
     this._changed();
     return true;
   }
@@ -426,22 +454,41 @@ export class LayerStack {
     return true;
   }
 
-  // 反相蒙版：写新画布（copy-on-write），避免破坏历史快照引用的旧画布
+  // 反相蒙版：逐瓦片取反，写新 surface（copy-on-write，保护历史快照引用）
+  // 注意：全显示的蒙版被反相后是「全隐藏」，这一步会把整层瓦片物化出来（罕见操作）
   invertMask(id = this.activeId) {
     const n = this.byId(id);
     if (!n || !n.mask) return false;
-    const src = n.mask.ctx.getImageData(0, 0, this.w, this.h);
-    const d = src.data;
-    for (let i = 0; i < d.length; i += 4) {
-      d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;
-      d[i + 3] = 255 - d[i + 3];
+    const src = n.mask.surface;
+    const ns = new TileSurface(this.w, this.h, src.ts, { blank: '#ffffff' });
+
+    for (let ty = 0; ty < ns.rows; ty++) {
+      for (let tx = 0; tx < ns.cols; tx++) {
+        const r = ns.tileRect(tx, ty);
+        const t = src.tiles.get(tx + ',' + ty);
+        const dst = ns.getTile(tx, ty, true);
+
+        if (!t) {
+          // 原来没有瓦片 = 全显示 → 反相后全隐藏
+          dst.ctx.clearRect(0, 0, r.w, r.h);
+          continue;
+        }
+        const img = t.ctx.getImageData(0, 0, r.w, r.h);
+        const d = img.data;
+        let allVisible = true;
+        for (let i = 0; i < d.length; i += 4) {
+          d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;
+          d[i + 3] = 255 - d[i + 3];
+          if (d[i + 3] !== 255) allVisible = false;
+        }
+        // 反相后如果整块都是「显示」，等同于默认状态，不必存
+        if (allVisible) { ns.tiles.delete(tx + ',' + ty); continue; }
+        dst.ctx.putImageData(img, 0, 0);
+      }
     }
-    const canvas = document.createElement('canvas');
-    canvas.width = this.w;
-    canvas.height = this.h;
-    const ctx = canvas.getContext('2d');
-    ctx.putImageData(src, 0, 0);
-    n.mask = { canvas, ctx, enabled: n.mask.enabled };
+    ns._bbox = null;
+
+    n.mask = { surface: ns, enabled: n.mask.enabled };
     this._changed();
     return true;
   }
@@ -449,31 +496,29 @@ export class LayerStack {
   clearMask(id = this.activeId) {
     const n = this.byId(id);
     if (!n || !n.mask) return false;
-    const canvas = document.createElement('canvas');
-    canvas.width = this.w;
-    canvas.height = this.h;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, this.w, this.h);
-    n.mask = { canvas, ctx, enabled: n.mask.enabled };
+    n.mask = { surface: new TileSurface(this.w, this.h, undefined, { blank: '#ffffff' }), enabled: n.mask.enabled };
     this._changed();
     return true;
   }
 
   // 蒙版上作画：亮度当作蒙版值（白=显示，黑=隐藏）
   paintMaskDab(layer, x, y, size, lum, stampCanvas) {
-    if (!layer.mask || !layer.mask.enabled) return;
-    const ctx = layer.mask.ctx;
-    ctx.save();
-    if (lum >= 0.5) {
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = lum;
-    } else {
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.globalAlpha = 1 - lum;
-    }
-    ctx.drawImage(stampCanvas, x - size / 2, y - size / 2, size, size);
-    ctx.restore();
+    const m = layer.mask;
+    if (!m || !m.enabled) return;
+    m.surface.stamp(x, y, size / 2 + 1, (ctx) => {
+      ctx.save();
+      if (lum >= 0.5) {
+        // 白 = 显示：往蒙版上叠白
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = lum;
+      } else {
+        // 黑 = 隐藏：把蒙版擦成透明
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.globalAlpha = 1 - lum;
+      }
+      ctx.drawImage(stampCanvas, x - size / 2, y - size / 2, size, size);
+      ctx.restore();
+    });
   }
 
   /* ---------------- 合并 ---------------- */
@@ -596,12 +641,26 @@ export class LayerStack {
     return { canvas: c, ctx };
   }
 
+  /**
+   * 把蒙版应用到目标 ctx 上。
+   * 蒙版是稀疏的（没有瓦片的地方 = 全显示），所以逐瓦片做 destination-in：
+   * 用 clip 把效果限制在瓦片矩形里，矩形外像素保持不变。
+   */
   _applyMaskInPlace(ctx, mask) {
     if (!mask || !mask.enabled) return;
-    ctx.save();
-    ctx.globalCompositeOperation = 'destination-in';
-    ctx.drawImage(mask.canvas, 0, 0);
-    ctx.restore();
+    const s = mask.surface;
+    if (!s || s.isEmpty()) return;   // 全显示，什么都不用做
+
+    for (const t of s.tiles.values()) {
+      const r = s.tileRect(t.tx, t.ty);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(r.x, r.y, r.w, r.h);
+      ctx.clip();
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.drawImage(t.canvas, r.x, r.y);
+      ctx.restore();
+    }
   }
 
   /**
@@ -653,7 +712,9 @@ export class LayerStack {
         continue;
       }
 
-      if (node.clipping && baseNode) {
+      if (node.clipping) {
+        // 没有可用基底（基底被隐藏或不存在）→ 剪贴层整层不显示（与 PS 一致）
+        if (!baseNode) continue;
         if (!baseCanvas) baseCanvas = this._materializeContent(baseNode, depth);
         const c = this._buffer(depth * 4 + 2);
         this._drawNodeContent(c.ctx, node, depth, true);
@@ -707,13 +768,26 @@ export class LayerStack {
   // 所有图层瓦片占用（字节），用于状态栏 / 基准台
   pixelBytes() {
     let n = 0;
-    for (const l of this.leaves()) n += l.surface.byteSize();
+    for (const l of this.leaves()) {
+      n += l.surface.byteSize();
+      if (l.mask) n += l.mask.surface.byteSize();
+    }
     return n;
   }
 
   tileCount() {
     let n = 0;
-    for (const l of this.leaves()) n += l.surface.tileCount;
+    for (const l of this.leaves()) {
+      n += l.surface.tileCount;
+      if (l.mask) n += l.mask.surface.tileCount;
+    }
+    return n;
+  }
+
+  // 蒙版占用（单独统计，便于观察稀疏效果）
+  maskBytes() {
+    let n = 0;
+    for (const l of this.leaves()) if (l.mask) n += l.mask.surface.byteSize();
     return n;
   }
 
@@ -725,7 +799,7 @@ export class LayerStack {
         id: n.id, type: n.type, name: n.name,
         visible: n.visible, opacity: n.opacity, blend: n.blend,
         locked: n.locked, clipping: n.clipping,
-        mask: n.mask ? { canvas: n.mask.canvas, enabled: n.mask.enabled } : null,
+        mask: n.mask ? { surface: n.mask.surface, enabled: n.mask.enabled } : null,
       };
       if (n.type === 'group') {
         return { ...base, expanded: n.expanded, children: this._snapNodes(n.children) };
@@ -740,9 +814,7 @@ export class LayerStack {
         id: m.id, type: m.type, name: m.name,
         visible: m.visible, opacity: m.opacity, blend: m.blend,
         locked: m.locked, clipping: m.clipping,
-        mask: m.mask
-          ? { canvas: m.mask.canvas, ctx: m.mask.canvas.getContext('2d'), enabled: m.mask.enabled }
-          : null,
+        mask: m.mask ? { surface: m.mask.surface, enabled: m.mask.enabled } : null,
       };
       if (m.type === 'group') {
         return { ...base, expanded: m.expanded, children: this._restoreNodes(m.children) };

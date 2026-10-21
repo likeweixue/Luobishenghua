@@ -537,11 +537,20 @@ function refreshThumbs() {
     const l = layers.byId(+mthumb.dataset.maskId);
     if (!l || !l.mask) continue;
     const tc = mthumb.getContext('2d');
-    tc.fillStyle = '#111111';
+    const ms = l.mask.surface;
+    tc.setTransform(1, 0, 0, 1, 0, 0);
+    tc.clearRect(0, 0, 22, 18);
+    // 蒙版缩略图：白 = 显示（默认），被改过的瓦片铺黑底再叠白色蒙版值
+    tc.fillStyle = '#ffffff';
     tc.fillRect(0, 0, 22, 18);
     tc.save();
     tc.scale(22 / layers.w, 18 / layers.h);
-    tc.drawImage(l.mask.canvas, 0, 0);
+    for (const t of ms.tiles.values()) {
+      const r = ms.tileRect(t.tx, t.ty);
+      tc.fillStyle = '#111111';
+      tc.fillRect(r.x, r.y, r.w, r.h);
+      tc.drawImage(t.canvas, r.x, r.y);
+    }
     tc.restore();
     if (!l.mask.enabled) {
       tc.strokeStyle = '#e24b4a';
