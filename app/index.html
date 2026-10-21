@@ -18,18 +18,35 @@
     </div>
     <span class="opt-sep"></span>
 
-    <label class="opt">粗细
-      <input type="range" id="brush-size" min="1" max="200" value="24">
-      <span class="val" id="brush-size-val">24</span>
-    </label>
-    <label class="opt">不透明度
-      <input type="range" id="brush-opacity" min="5" max="100" value="100">
-      <span class="val" id="brush-opacity-val">100%</span>
-    </label>
-    <label class="opt" title="防抖：数值越大线条越平滑，但会略微滞后">防抖
-      <input type="range" id="brush-smoothing" min="0" max="100" value="0">
-      <span class="val" id="brush-smoothing-val">0%</span>
-    </label>
+    <div class="opt-group" id="opt-brush-group">
+      <label class="opt">粗细
+        <input type="range" id="brush-size" min="1" max="200" value="24">
+        <span class="val" id="brush-size-val">24</span>
+      </label>
+      <label class="opt">不透明度
+        <input type="range" id="brush-opacity" min="5" max="100" value="100">
+        <span class="val" id="brush-opacity-val">100%</span>
+      </label>
+      <label class="opt" title="防抖：数值越大线条越平滑，但会略微滞后">防抖
+        <input type="range" id="brush-smoothing" min="0" max="100" value="0">
+        <span class="val" id="brush-smoothing-val">0%</span>
+      </label>
+    </div>
+
+    <div class="opt-group hidden" id="opt-select-group">
+      <button id="btn-sel-all" title="全选 (Cmd+A)">全选</button>
+      <button id="btn-sel-invert" title="反选 (Shift+Cmd+I)">反选</button>
+      <button id="btn-sel-feather" title="羽化选区">羽化</button>
+      <button id="btn-sel-none" title="取消选择 (Cmd+D)">取消选择</button>
+    </div>
+
+    <div class="opt-group hidden" id="opt-transform-group">
+      <button id="btn-tr-flip-h" title="水平翻转">水平翻转</button>
+      <button id="btn-tr-flip-v" title="垂直翻转">垂直翻转</button>
+      <button id="btn-tr-apply" class="primary" title="应用 (Enter)">应用</button>
+      <button id="btn-tr-cancel" title="取消 (Esc)">取消</button>
+    </div>
+
     <span class="opt-sep"></span>
     <label class="opt" title="当前前景色">颜色
       <span id="color-chip"></span>
@@ -66,6 +83,11 @@
           <div class="tool-list" id="tool-list">
             <button data-tool="brush" class="active"><i>✏</i> 画笔 <kbd>B</kbd></button>
             <button data-tool="eraser"><i>◻</i> 橡皮 <kbd>E</kbd></button>
+            <button data-tool="move"><i>✥</i> 移动 <kbd>V</kbd></button>
+            <button data-tool="rect"><i>▭</i> 矩形选框 <kbd>M</kbd></button>
+            <button data-tool="ellipse"><i>◯</i> 椭圆选框</button>
+            <button data-tool="lasso"><i>〰</i> 套索 <kbd>L</kbd></button>
+            <button data-tool="poly"><i>⬠</i> 多边形套索</button>
             <button data-tool="hand"><i>✋</i> 抓手 <kbd>H</kbd></button>
           </div>
         </div>
@@ -213,7 +235,7 @@
     </div>
 
     <div class="home-foot">
-      <span>落笔生花 Luobishenghua · beta6</span>
+      <span>落笔生花 Luobishenghua · beta7</span>
       <span>WorkBuddy × likeweixue</span>
     </div>
   </div>

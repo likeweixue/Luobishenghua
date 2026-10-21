@@ -15,6 +15,10 @@ export class Engine {
     this.view = { scale: 1, rotation: 0, tx: 0, ty: 0 };
     this.dpr = window.devicePixelRatio || 1;
     this.onRender = null; // 渲染后回调（导航器等）
+    this.selection = null;   // 选区（绘制蚂蚁线）
+    this.transform = null;   // 自由变换浮动层
+    this.previewPath = null; // 选区拖拽预览路径
+    this.antsPhase = 0;      // 蚂蚁线动画相位（屏幕像素）
     this.layers = null;   // 图层栈（M2 起由 LayerStack 接管）
   }
 
@@ -132,7 +136,49 @@ export class Engine {
     ctx.lineWidth = 1 / v.scale;
     ctx.strokeRect(0, 0, this.docW, this.docH);
 
+    // 浮动变换层（图层上已挖空，这里补画预览）
+    if (this.transform) this.transform.render(ctx, v);
+    // 选区蚂蚁线
+    if (this.selection) this._drawSelection(ctx, v);
+    // 拖拽中的选区预览
+    if (this.previewPath) {
+      ctx.save();
+      ctx.lineWidth = 1 / v.scale;
+      ctx.setLineDash([4 / v.scale, 4 / v.scale]);
+      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+      ctx.stroke(this.previewPath);
+      ctx.lineDashOffset = -4 / v.scale;
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.stroke(this.previewPath);
+      ctx.restore();
+    }
+
     if (this.onRender) this.onRender();
+  }
+
+  _drawSelection(ctx, v) {
+    const sel = this.selection;
+    if (!sel || !sel.active) return;
+    const lw = 1 / v.scale;
+    ctx.save();
+    ctx.lineWidth = lw;
+    ctx.setLineDash([4 * lw, 4 * lw]);
+    if (sel.path) {
+      ctx.lineDashOffset = -this.antsPhase * lw;
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      ctx.stroke(sel.path);
+      ctx.strokeStyle = 'rgba(0,0,0,0.88)';
+      ctx.lineDashOffset = -(this.antsPhase + 4) * lw;
+      ctx.stroke(sel.path);
+    } else {
+      ctx.lineDashOffset = -this.antsPhase * lw;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.strokeRect(0, 0, this.docW, this.docH);
+      ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      ctx.lineDashOffset = -(this.antsPhase + 4) * lw;
+      ctx.strokeRect(0, 0, this.docW, this.docH);
+    }
+    ctx.restore();
   }
 
   // 切换文档尺寸（导入 PSD 时用）

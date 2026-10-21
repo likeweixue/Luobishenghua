@@ -53,7 +53,14 @@ export function initMenuBar(actions) {
         { label: '撤销', shortcut: '⌘Z', action: 'undo' },
         { label: '重做', shortcut: '⇧⌘Z', action: 'redo' },
         { sep: true },
-        { label: '清空当前图层', action: 'clearLayer' },
+        { label: '复制', shortcut: '⌘C', action: 'copy' },
+        { label: '剪切', shortcut: '⌘X', action: 'cut' },
+        { label: '粘贴为新图层', shortcut: '⌘V', action: 'paste' },
+        { sep: true },
+        { label: '清除（选区 / 图层）', shortcut: 'Delete', action: 'clearLayer' },
+        { label: '填充前景色', shortcut: '⇧F5', action: 'fill' },
+        { sep: true },
+        { label: '自由变换', shortcut: '⌘T', action: 'freeTransform' },
       ],
     },
     {
@@ -79,7 +86,17 @@ export function initMenuBar(actions) {
         { label: '盖印图层', action: 'layerStamp' },
         { label: '拼合图像', action: 'layerFlatten' },
         { sep: true },
-        { label: '清空当前图层', action: 'clearLayer' },
+        { label: '清除（选区 / 图层）', action: 'clearLayer' },
+      ],
+    },
+    {
+      label: '选择',
+      items: [
+        { label: '全选', shortcut: '⌘A', action: 'selectAll' },
+        { label: '取消选择', shortcut: '⌘D', action: 'deselect' },
+        { label: '反选', shortcut: '⇧⌘I', action: 'invertSelection' },
+        { sep: true },
+        { label: '羽化…', action: 'featherSelection' },
       ],
     },
     {
@@ -190,9 +207,9 @@ export function aboutDialog() {
   showModal('关于落笔生花', `
     <div class="about">
       <div class="about-name">落笔生花</div>
-      <div class="about-en">Luobishenghua · beta6</div>
+      <div class="about-en">Luobishenghua · beta7</div>
       <p>一款正在生长的绘画软件。</p>
-      <p>压感笔刷引擎 · 图层组 / 蒙版 / 剪贴蒙版 · PSD 分层互通 · .abr 笔刷生态<br>原生工程 .lbsh · 增量撤销 · 自动保存与崩溃恢复<br>全部为手写零依赖实现</p>
+      <p>压感笔刷引擎 · 图层组 / 蒙版 / 剪贴蒙版 · 选区 / 自由变换<br>PSD 分层互通 · .abr 笔刷生态 · 原生工程 .lbsh<br>增量撤销 · 自动保存与崩溃恢复 · 全部为手写零依赖实现</p>
       <p class="about-credit">开发：WorkBuddy × likeweixue</p>
     </div>`);
 }
@@ -201,6 +218,12 @@ export function shortcutsDialog() {
   showModal('快捷键一览', `
     <table class="kbd-table">
       <tr><td><kbd>B</kbd> / <kbd>E</kbd> / <kbd>H</kbd></td><td>画笔 / 橡皮 / 抓手</td></tr>
+      <tr><td><kbd>V</kbd> / <kbd>M</kbd> / <kbd>⇧M</kbd></td><td>移动 / 矩形选框 / 椭圆选框</td></tr>
+      <tr><td><kbd>L</kbd> / <kbd>⇧L</kbd></td><td>套索 / 多边形套索（双击或 Enter 闭合）</td></tr>
+      <tr><td><kbd>⌘A</kbd> / <kbd>⌘D</kbd> / <kbd>⇧⌘I</kbd></td><td>全选 / 取消选择 / 反选</td></tr>
+      <tr><td><kbd>⌘T</kbd> / <kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>自由变换 / 应用 / 取消</td></tr>
+      <tr><td><kbd>⌘C</kbd> / <kbd>⌘X</kbd> / <kbd>⌘V</kbd></td><td>复制 / 剪切 / 粘贴为新图层</td></tr>
+      <tr><td><kbd>Delete</kbd> / <kbd>⇧F5</kbd></td><td>清除选区内容 / 填充前景色</td></tr>
       <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>笔刷减小 / 增大</td></tr>
       <tr><td><kbd>⌘Z</kbd> / <kbd>⇧⌘Z</kbd></td><td>撤销 / 重做</td></tr>
       <tr><td><kbd>⌘N</kbd></td><td>新建文档</td></tr>

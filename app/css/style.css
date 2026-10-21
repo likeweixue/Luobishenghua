@@ -201,6 +201,7 @@ button.active { background: var(--accent); border-color: var(--accent); color: #
   touch-action: none;
   cursor: crosshair;
 }
+#canvas.moving { cursor: move; }
 #canvas.panning { cursor: grab; }
 #canvas.panning:active { cursor: grabbing; }
 
@@ -659,3 +660,9 @@ button.active { background: var(--accent); border-color: var(--accent); color: #
 .layer-row .ltags { display: flex; gap: 3px; flex-shrink: 0; }
 .layer-row .ltag { font-size: 9px; color: #8f8f98; }
 .layer-row .ltag.clip { color: #7fb4e8; }
+
+/* ---------- 选区 / 变换工具条 ---------- */
+.opt-group { display: flex; align-items: center; gap: 8px; }
+.opt-group.hidden { display: none !important; }
+#opt-select-group button,
+#opt-transform-group button { padding: 3px 10px; font-size: 11px; }

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>N3 TEST</title></head>
+<body>
+<pre id="out">running…</pre>
+<script type="module">
+import { Selection } from './app/js/selection.js';
+import { Transform } from './app/js/transform.js';
+import { LayerStack } from './app/js/layers.js';
+import { History } from './app/js/history.js';
+
+const out = [];
+let pass = 0, fail = 0;
+const check = (c, label, extra = '') => {
+  if (c) { pass++; out.push('✅ ' + label); }
+  else { fail++; out.push('❌ ' + label + (extra ? ' — ' + extra : '')); }
+};
+
+function alphaAt(sel, x, y) {
+  return sel.ctx.getImageData(x, y, 1, 1).data[3];
+}
+function px(canvas, x, y) {
+  const d = canvas.getContext('2d').getImageData(x, y, 1, 1).data;
+  return [d[0], d[1], d[2], d[3]];
+}
+function rectPath(x, y, w, h) {
+  const p = new Path2D();
+  p.rect(x, y, w, h);
+  return p;
+}
+
+const engineStub = {
+  view: { scale: 1, rotation: 0, tx: 0, ty: 0 },
+  render() {},
+  transform: null,
+  screenToWorld(sx, sy) {
+    const v = this.view;
+    const dx = sx - v.tx, dy = sy - v.ty;
+    const c = Math.cos(-v.rotation), s = Math.sin(-v.rotation);
+    return { x: (dx * c - dy * s) / v.scale, y: (dx * s + dy * c) / v.scale };
+  },
+};
+
+function run() {
+  /* ---------- 1. 矩形选区 ---------- */
+  const sel = new Selection(200, 150);
+  sel.setPath(rectPath(10, 10, 60, 40), 'replace');
+  check(sel.active, '矩形选区生效');
+  const b = sel.bounds;
+  check(b && b.x === 10 && b.y === 10 && b.w === 60 && b.h === 40, '选区边界正确', JSON.stringify(b));
+  check(alphaAt(sel, 40, 30) === 255, '选区内 alpha = 255');
+  check(alphaAt(sel, 5, 5) === 0, '选区外 alpha = 0');
+
+  /* ---------- 2. 加减选 ---------- */
+  sel.setPath(rectPath(50, 30, 40, 40), 'add');
+  check(alphaAt(sel, 80, 60) === 255, '加选区域生效');
+  check(sel.bounds.w === 80, '加选后边界合并', sel.bounds.w + '');
+  sel.setPath(rectPath(10, 10, 20, 20), 'subtract');
+  check(alphaAt(sel, 15, 15) === 0, '减选区域被挖掉');
+  check(alphaAt(sel, 40, 30) === 255, '减选不影响其它区域');
+
+  /* ---------- 3. 反选 ---------- */
+  sel.invert();
+  check(alphaAt(sel, 15, 15) === 255, '反选后原挖空处被选中');
+  check(alphaAt(sel, 40, 30) === 0, '反选后原选区变空');
+  check(sel.bounds.w === 200 && sel.bounds.h === 150, '反选边界覆盖全画布');
+
+  /* ---------- 4. 椭圆选区 ---------- */
+  const sel2 = new Selection(200, 150);
+  const ep = new Path2D();
+  ep.ellipse(100, 75, 60, 40, 0, 0, Math.PI * 2);
+  sel2.setPath(ep, 'replace');
+  check(alphaAt(sel2, 100, 75) === 255, '椭圆中心被选中');
+  check(alphaAt(sel2, 10, 10) === 0, '椭圆角落未选中');
+
+  /* ---------- 5. 羽化 ---------- */
+  const sel3 = new Selection(200, 150);
+  sel3.setPath(rectPath(60, 50, 80, 50), 'replace');
+  sel3.feather(10);
+  const edge = alphaAt(sel3, 60, 75);
+  const center = alphaAt(sel3, 100, 75);
+  check(center >= 250, '羽化后中心仍为实心（≥250）', center + '');
+  check(edge > 0 && edge < 255, '羽化后边缘为半透明', edge + '');
+  check(sel3.path === null, '羽化后无几何路径（蚂蚁线退化）');
+
+  /* ---------- 6. 变换：缩放提交 ---------- */
+  const layers = new LayerStack(200, 150);
+  const history = new History(engineStub, layers, 50);
+  const s4 = new Selection(200, 150);
+  const tr = new Transform(engineStub, layers, history, s4);
+
+  const layer = layers.active;
+  layer.ctx.fillStyle = '#1d9e75';
+  layer.ctx.fillRect(10, 10, 40, 40);
+
+  s4.setPath(rectPath(10, 10, 40, 40), 'replace');
+  check(tr.start('free') === true, '启动自由变换');
+  check(px(layer.canvas, 20, 20)[3] === 0, '提层后原区域被挖空');
+
+  tr.scaleX = 2;
+  tr.scaleY = 1;
+  tr.commit();
+  check(tr.active === false, '提交后变换结束');
+  const wide = px(layer.canvas, 60, 20);
+  check(wide[3] > 0, '缩放后内容延伸到 x=60', wide + '');
+  check(px(layer.canvas, 20, 20)[3] > 0, '原位置仍有内容（中心缩放）');
+
+  history.undo();
+  check(px(layer.canvas, 60, 20)[3] === 0, '撤销后缩放内容消失');
+  check(px(layer.canvas, 20, 20)[3] > 0, '撤销后原始内容恢复');
+
+  /* ---------- 7. 变换：取消 ---------- */
+  tr.start('free');
+  tr.scaleX = 3;
+  tr.cancel();
+  check(px(layer.canvas, 20, 20)[3] > 0, '取消变换后内容原样恢复');
+  check(px(layer.canvas, 60, 20)[3] === 0, '取消变换后没有缩放残留');
+
+  /* ---------- 8. 变换：移动 ---------- */
+  s4.clear();
+  check(tr.start('move') === true, '启动移动变换');
+  tr.beginDrag('move', 20, 20);
+  tr.pointerMove(70, 20);
+  tr.pointerUp();   // move 模式松手即提交
+  check(tr.active === false, '移动后自动提交');
+  check(px(layer.canvas, 20, 20)[3] === 0, '移动后原位置已空');
+  check(px(layer.canvas, 70, 20)[3] > 0, '移动后内容出现在新位置');
+
+  /* ---------- 9. 变换：旋转 90° ---------- */
+  history.undo();
+  // 重新选中方块，让旋转围绕方块中心而不是画布中心
+  s4.setPath(rectPath(10, 10, 40, 40), 'replace');
+  const tr2 = new Transform(engineStub, layers, history, s4);
+  tr2.start('free');
+  tr2.angle = Math.PI / 2;
+  tr2.commit();
+  // 40x40 方块绕中心旋转 90° 后形状不变，检查中心点仍填充
+  check(px(layer.canvas, 30, 30)[3] > 0, '旋转后中心仍有内容');
+
+  const text = out.join('\n');
+  document.getElementById('out').textContent = text + `\n\n结果：${pass} 通过 / ${fail} 失败`;
+  document.title = fail ? 'FAIL ' + fail : 'PASS ' + pass;
+}
+
+try { run(); } catch (err) {
+  document.getElementById('out').textContent = '异常：' + (err.stack || err);
+  document.title = 'ERROR';
+}
+</script>
+</body>
+</html>
