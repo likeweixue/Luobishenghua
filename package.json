@@ -1,0 +1,15 @@
+{
+  "name": "luobishenghua",
+  "version": "0.1.0",
+  "description": "落笔生花 Luobishenghua - 专业绘画软件",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "build": "tauri build",
+    "dev": "tauri dev"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

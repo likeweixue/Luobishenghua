@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>落笔生花 Luobishenghua</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- 菜单栏（PS 风格） -->
+  <nav id="menubar"></nav>
+
+  <!-- 顶部细条：品牌 + 全局操作 -->
+  <header id="topbar">
+    <div class="brand">
+      <span class="brand-cn">落笔生花</span>
+      <span class="brand-en">Luobishenghua</span>
+    </div>
+    <div class="top-actions">
+      <button id="btn-undo" title="撤销 (Cmd+Z)">↩</button>
+      <button id="btn-redo" title="重做 (Cmd+Shift+Z)">↪</button>
+      <span class="sep"></span>
+      <button id="btn-rotate-left" title="逆时针旋转 15°">⟲</button>
+      <button id="btn-rotate-right" title="顺时针旋转 15°">⟳</button>
+      <button id="btn-reset-view" title="复位视图 (0)">复位视图</button>
+      <span id="zoom-label">100%</span>
+      <span class="sep"></span>
+      <button id="btn-open" title="打开 PSD 文件（也可直接拖入窗口）">打开 PSD</button>
+      <button id="btn-save-psd" title="导出为 PSD（分层）">导出 PSD</button>
+      <button id="btn-clear" title="清空当前图层">清空</button>
+      <button id="btn-save" class="primary" title="导出 PNG">导出 PNG</button>
+    </div>
+    <input type="file" id="file-open" accept=".psd" style="display:none">
+  </header>
+
+  <!-- 工作区：画布 + 可停靠面板 -->
+  <main id="stage">
+    <canvas id="canvas"></canvas>
+
+    <div id="dock-root">
+
+      <section class="panel" data-panel="tools" data-dock="left">
+        <div class="panel-title"><span class="grip"></span><span class="name">工具</span><button class="panel-collapse" title="折叠">–</button></div>
+        <div class="panel-body">
+          <div class="tool-list" id="tool-list">
+            <button data-tool="brush" class="active"><i>✏</i> 画笔 <kbd>B</kbd></button>
+            <button data-tool="eraser"><i>◻</i> 橡皮 <kbd>E</kbd></button>
+            <button data-tool="hand"><i>✋</i> 抓手 <kbd>H</kbd></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="tool-props" data-dock="left">
+        <div class="panel-title"><span class="grip"></span><span class="name">工具属性</span><button class="panel-collapse" title="折叠">–</button></div>
+        <div class="panel-body">
+          <label class="prop-row">粗细
+            <input type="range" id="brush-size" min="1" max="200" value="24">
+            <span id="brush-size-val">24</span>
+          </label>
+          <label class="prop-row">不透明度
+            <input type="range" id="brush-opacity" min="5" max="100" value="100">
+            <span id="brush-opacity-val">100%</span>
+          </label>
+          <div class="prop-row color-row">
+            <span>当前色</span>
+            <span id="color-chip"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="brushes" data-dock="left">
+        <div class="panel-title"><span class="grip"></span><span class="name">笔刷仓库</span><button class="panel-collapse" title="折叠">–</button></div>
+        <div class="panel-body">
+          <div class="brush-actions">
+            <button id="btn-import-abr" title="导入 Photoshop 笔刷（.abr，也可拖入窗口）">导入 .abr 笔刷</button>
+            <input type="file" id="file-abr" accept=".abr" style="display:none">
+          </div>
+          <div class="brush-grid" id="brush-presets"></div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="color" data-dock="left">
+        <div class="panel-title"><span class="grip"></span><span class="name">颜色</span><button class="panel-collapse" title="折叠">–</button></div>
+        <div class="panel-body">
+          <canvas id="color-wheel" width="160" height="160"></canvas>
+          <div id="swatches"></div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="navigator" data-dock="right">
+        <div class="panel-title"><span class="grip"></span><span class="name">导航器</span><button class="panel-collapse" title="折叠">–</button></div>
+        <div class="panel-body">
+          <canvas id="navigator" width="216" height="160"></canvas>
+          <div class="panel-hint">拖动红框移动视野</div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="layers" data-dock="right">
+        <div class="panel-title"><span class="grip"></span><span class="name">图层</span><button class="panel-collapse" title="折叠">–</button></div>
+        <div class="panel-body">
+          <div class="layer-controls">
+            <select id="layer-blend" title="混合模式">
+              <option value="source-over">正常</option>
+              <option value="multiply">正片叠底</option>
+              <option value="screen">滤色</option>
+              <option value="overlay">叠加</option>
+              <option value="soft-light">柔光</option>
+              <option value="darken">变暗</option>
+              <option value="lighten">变亮</option>
+              <option value="color-dodge">颜色加深</option>
+              <option value="lighter">线性减淡</option>
+            </select>
+            <input type="range" id="layer-opacity" min="0" max="100" value="100" title="图层不透明度">
+            <span id="layer-opacity-val">100</span>
+          </div>
+          <div class="layer-controls btns">
+            <button id="btn-layer-add" title="新建图层">＋ 新建</button>
+            <button id="btn-layer-del" title="删除图层">删除</button>
+            <button id="btn-layer-up" title="上移一层">↑</button>
+            <button id="btn-layer-down" title="下移一层">↓</button>
+          </div>
+          <div id="layer-list"></div>
+          <div class="panel-hint">双击图层名可重命名 · 双击行尾眼睛切换显隐</div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <footer id="statusbar">
+    <span id="status-doc">画布 1600 × 1600</span>
+    <span id="status-brush"></span>
+    <span id="status-pressure">压感: —</span>
+    <span class="hint">拖动面板标题栏可移动 · 拖到左右边缘磁吸停靠 · 空格/H 抓手 · 捏合缩放 · [ ] 调粗细</span>
+  </footer>
+
+  <script type="module" src="js/main.js"></script>
+
+  <!-- 模态对话框 -->
+  <div id="modal-overlay" class="hidden"><div id="modal"></div></div>
+</body>
+</html>

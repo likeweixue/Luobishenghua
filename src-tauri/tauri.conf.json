@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "落笔生花",
+  "version": "0.1.0",
+  "identifier": "cn.luobishenghua.paint",
+  "build": {
+    "frontendDist": "../app",
+    "devUrl": "http://localhost:8619/app/"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "落笔生花 Luobishenghua",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "category": "Graphics and Design",
+    "shortDescription": "落笔生花 - 专业绘画软件",
+    "longDescription": "落笔生花 Luobishenghua：对标 CSP 的专业绘画软件，支持 PSD 分层读写与 PS 笔刷导入。",
+    "icon": [
+      "icons/icon.icns"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  }
+}
