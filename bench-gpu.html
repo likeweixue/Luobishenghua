@@ -117,8 +117,7 @@ function runScenario(name, w, h, nLayers, sparse) {
   log(`  整屏合成 2D ${fmt(r2.median)}ms  GPU ${gpuOK ? fmt(r3.median) + 'ms' : '—'}   视图重绘 2D ${fmt(v2.median)}ms  GPU ${gpuOK ? fmt(v3.median) + 'ms' : '—'}`);
   e2.layers = null; e3.layers = null;
   s2.layers.length = 0; s3.layers.length = 0;
-  if (e3.gpu) for (const e of e3.gpu.tex.values()) e3.gpu.gl.deleteTexture(e.tex);
-  if (e3.gpu) e3.gpu.tex.clear();
+  if (e3.gpu) e3.gpu.dropTextures();
 }
 
 runScenario('sparse', 1600, 1600, 10, true);

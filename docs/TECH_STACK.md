@@ -4,7 +4,7 @@
 
 1. **Photoshop 桌面版不是 HTML/CSS/JS 做的。** 它的核心是 C++（图像合成、色彩管理、文件格式、GPU、插件），界面是原生框架；只有扩展面板 / 脚本层使用 JavaScript（UXP / ExtendScript）。CSP 同样以 C++ 核心 + 原生界面为主。
 2. **HTML/CSS/JS 做 UI 完全没问题，而且很适合你现在的阶段。** 你的界面、面板、对话框、快捷键、主题，用 Web 技术迭代速度远快于原生 UI。
-3. **决定绘画软件上限的不是 CSS/HTML，而是渲染与笔刷管线。** 目前项目以 Canvas 2D + JS 为主，beta13 起简单平铺图层已走 WebGL2，beta14 面板标签已可自由拖拽重组，beta15 组 / 蒙版 / 混合模式也上了 GPU，配合 Tauri 2 的 Rust 壳，是一个合理的起步架构；要往专业级走，继续把「剪贴蒙版 / 笔刷铺排 / 大图缩放 / draw call 批处理」迁到 GPU（WebGL2 / WebGPU），把重活交给 WASM 或 Rust。
+3. **决定绘画软件上限的不是 CSS/HTML，而是渲染与笔刷管线。** 目前项目以 Canvas 2D + JS 为主，beta13 起简单平铺图层已走 WebGL2，beta14 面板标签已可自由拖拽重组，beta15 组 / 蒙版 / 混合模式也上了 GPU，beta16 瓦片走纹理数组 + instanced draw，配合 Tauri 2 的 Rust 壳，是一个合理的起步架构；要往专业级走，继续把「剪贴蒙版 / 笔刷铺排 / 大图缩放」迁到 GPU（WebGL2 / WebGPU），把重活交给 WASM 或 Rust。
 4. 如果目标是「专业绘画工具」而不是「PS 克隆」，**HTML/CSS/JS + Tauri + WebGPU/WASM** 是一条现实且成本可控的路线。如果目标是和 PS 正面竞争，最终仍然需要一个 C++/Rust 的像素核心。
 
 ---
@@ -13,7 +13,7 @@
 
 | 层 | Photoshop | Clip Studio Paint | 落笔生花（当前） |
 |---|---|---|---|
-| 画布 / 合成 | C++ + GPU | C++ + GPU | Canvas 2D + WebGL2（组 / 蒙版 / 混合） |
+| 画布 / 合成 | C++ + GPU | C++ + GPU | Canvas 2D + WebGL2（组 / 蒙版 / 混合 + instanced） |
 | 笔刷引擎 | C++，原生 SIMD/GPU | C++ | JS + Canvas（印章铺排） |
 | 文件格式 | C++（PSD/PSB/TIFF…） | C++ | JS（PSD / ABR / ZIP） |
 | 界面 | 原生（macOS AppKit / Windows 自绘） | 原生 | HTML/CSS |
@@ -39,7 +39,7 @@
 2. **笔刷铺排**：现在每落一个印章都走 2D canvas 绘制 + 读回；高密度笔刷、大笔尖、低间距时会掉帧。可以把印章批处理成顶点/实例，用 WebGL/WebGPU 一次画完。
 3. **主线程**：PSD 解析、ZIP、缩略图、自动保存都在主线程；大文件会卡 UI。需要 Worker / OffscreenCanvas / Rust 端处理。
 4. **色彩管理**：只有 sRGB 8 位；专业印刷 / HDR 需要 ICC、16 位、线性空间。
-5. **UI 工程化**：目前 JS 约 10.1k 行、无 TypeScript、无组件化；继续长大后面板/菜单/状态会互相缠绕。建议逐步 TS + 轻量状态管理，不需要上 React。
+5. **UI 工程化**：目前 JS 约 10.2k 行、无 TypeScript、无组件化；继续长大后面板/菜单/状态会互相缠绕。建议逐步 TS + 轻量状态管理，不需要上 React。
 
 ## 4. 推荐演进路线
 
@@ -55,11 +55,12 @@
 > **beta13 / beta15 已落地**：`app/js/gpu.js` 用 WebGL2 渲染简单平铺图层；
 > beta15 增加 FBO 复杂路径，支持图层组（≤4 层）、图层 / 组蒙版、正片叠底 / 滤色 /
 > 叠加 / 柔光 / 变暗 / 变亮 / 颜色减淡 / 线性减淡；剪贴蒙版、组嵌套 >4、超大瓦片
-> 自动回退 Canvas2D。4000² / 20 层稀疏简单栈的本机基准：整屏合成 18.5 ms → 0.2 ms，
-> 视图重绘 19 ms → 0.3 ms。beta14 面板标签已支持拖拽重组 / 停靠，单列工具栏也已落地。
-> 下一步是 draw call 批处理 / 纹理图集，以及笔刷印章 GPU 化。
+> 自动回退 Canvas2D。4000² / 20 层稀疏简单栈的本机基准：整屏合成 15.8 ms → 0.4 ms，
+> 视图重绘 13.2 ms → 0.1 ms。beta14 面板标签已支持拖拽重组 / 停靠，单列工具栏也已落地。
+> beta16 已把瓦片放进 256×256 纹理数组，并用 instanced draw 合并：简单路径 1 次 draw call，复杂路径每层 1 次。
+> 下一步是笔刷印章 GPU 化 / OffscreenCanvas + Worker，以及 TypeScript + 自动化测试。
 
-- 在已落地的 WebGL2 简单 / 复杂合成（组 / 蒙版 / 混合）上继续做纹理图集 / 实例化批绘制，减少每帧 draw call；后续评估 **WebGPU**（新设备优先），Canvas 2D 长期作为 fallback。
+- 在已落地的 WebGL2 简单 / 复杂合成（组 / 蒙版 / 混合）与纹理数组 + instanced draw 上继续做笔刷批绘制；后续评估 **WebGPU**（新设备优先），Canvas 2D 长期作为 fallback。
 - 笔刷印章改为 GPU 实例化/批绘制；瓦片作为纹理图集（atlas），避免每帧上传。
 - 视图变换（缩放/旋转/平移）直接在 GPU 上做矩阵变换，标尺/选区用叠加层。
 - 重计算（色彩转换、滤镜、液化）用 **WASM（Rust/C++）**，通过 Tauri 或 wasm-bindgen 调用。
@@ -73,6 +74,6 @@
 
 ## 5. 一句话建议
 
-**不要换掉 HTML/CSS/JS，也不要把「像 PS」误解成「必须用 Adobe 的技术」。** 当前最值得投入的是：把 draw call 批处理 / 纹理图集和笔刷 GPU 化做起来，把重活移出主线程，把 UI 工程化。beta15 之后，界面、面板和 GPU 组 / 蒙版 / 混合都已跨过「像 PS」的门槛；下一阶段的瓶颈在批绘制与笔刷管线，不在 CSS。
+**不要换掉 HTML/CSS/JS，也不要把「像 PS」误解成「必须用 Adobe 的技术」。** 当前最值得投入的是：把笔刷印章 GPU 化和 Worker 化做起来，把重活移出主线程，把 UI 工程化。beta16 之后，界面、面板、GPU 组 / 蒙版 / 混合和瓦片批绘制都已跨过「像 PS」的门槛；下一阶段的瓶颈在笔刷管线与工程化，不在 CSS。
 
 DeepSeek 自 beta12 起参与本项目的界面 / 面板 / GPU / 测试协作（2026）。

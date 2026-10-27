@@ -1,5 +1,6 @@
 // WebGL2 合成器
-// DeepSeek 自 beta12 起参与落笔生花，beta13 落地简单图层合成，beta15 扩展组 / 蒙版 / 混合模式。
+// DeepSeek 自 beta12 起参与落笔生花：beta13 简单图层、beta15 组/蒙版/混合、
+// beta16 用纹理数组 + instanced draw 把瓦片批量化。
 //
 // 两条路径：
 //   1. simple：普通图层 + 正常混合 + 无蒙版 / 无组，直接 draw 到默认帧缓冲（最快）
@@ -37,18 +38,37 @@ void main() {
   gl_Position = vec4(a_unit * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
+const VS_TILE = `#version 300 es
+layout(location = 0) in vec2 a_unit;
+layout(location = 1) in vec4 a_rect;
+layout(location = 2) in vec2 a_uv;
+layout(location = 3) in vec3 a_meta;   // x=layer, y=mask, z=opacity
+uniform vec2 u_translate;
+uniform mat2 u_rot;
+uniform float u_scale;
+uniform vec2 u_size;
+out vec2 v_uv;
+out vec3 v_meta;
+void main() {
+  vec2 world = a_rect.xy + a_unit * a_rect.zw;
+  v_uv = vec2(a_unit.x * a_uv.x, (1.0 - a_unit.y) * a_uv.y);
+  v_meta = a_meta;
+  vec2 s = u_translate + u_rot * (world * u_scale);
+  gl_Position = vec4(s.x / u_size.x * 2.0 - 1.0, 1.0 - s.y / u_size.y * 2.0, 0.0, 1.0);
+}`;
+
 const FS_TILE = `#version 300 es
 precision highp float;
+precision highp sampler2DArray;
 in vec2 v_uv;
-uniform sampler2D u_tex;
-uniform sampler2D u_mask;
-uniform float u_hasMask;
-uniform float u_opacity;
+in vec3 v_meta;
+uniform sampler2DArray u_atlas;
+uniform sampler2DArray u_maskAtlas;
 out vec4 outColor;
 void main() {
-  vec4 c = texture(u_tex, v_uv);
-  if (u_hasMask > 0.5) c *= texture(u_mask, v_uv).a;
-  outColor = c * u_opacity;
+  vec4 c = texture(u_atlas, vec3(v_uv, v_meta.x));
+  if (v_meta.y >= 0.0) c *= texture(u_maskAtlas, vec3(v_uv, v_meta.y)).a;
+  outColor = c * v_meta.z;
 }`;
 
 const FS_CHECKER = `#version 300 es
@@ -195,10 +215,15 @@ export class GpuRenderer {
     });
     this.ok = !!this.gl;
     this.error = null;
-    this.tex = new Map();   // tile.canvas -> { tex, rev, last }
+    // 256×256 纹理数组：瓦片不再各占一张 texture，简单路径可一次 instanced draw 画完
+    this.layerAtlas = { tex: null, cap: 0, slots: new Map(), free: [] };
+    this.maskAtlas = { tex: null, cap: 0, slots: new Map(), free: [] };
+    this.batchData = new Float32Array(9 * 256);
+    this.batchCount = 0;
     this.frame = 0;
     this.maxTiles = 800;              // 超过就回退 Canvas2D，避免 GPU 纹理爆内存
     this.maxBytes = 200 * 1024 * 1024;
+    this.lastStats = null;
     this.maxDepth = 4;                // 组嵌套深度上限（超过回退）
     this.lastInfo = null;
     this.lastPlan = null;
@@ -223,7 +248,7 @@ export class GpuRenderer {
 
   _init() {
     const gl = this.gl;
-    this.tileProg = program(gl, VS, FS_TILE);
+    this.tileProg = program(gl, VS_TILE, FS_TILE);
     this.checkerProg = program(gl, VS, FS_CHECKER);
     this.shadowProg = program(gl, VS, FS_SHADOW);
     this.blitProg = program(gl, VS_FULL, FS_BLIT);
@@ -236,7 +261,7 @@ export class GpuRenderer {
     };
     this.u = {
       tile: {
-        ...loc(this.tileProg, ['rect', 'translate', 'rot', 'scale', 'size', 'tex', 'mask', 'hasMask', 'opacity']),
+        ...loc(this.tileProg, ['translate', 'rot', 'scale', 'size', 'atlas', 'maskAtlas']),
       },
       checker: {
         ...loc(this.checkerProg, ['rect', 'translate', 'rot', 'scale', 'size', 'doc']),
@@ -255,6 +280,25 @@ export class GpuRenderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    // 实例化 VAO：base quad + 每瓦片 rect/uv/layer/mask/opacity
+    this.instVao = gl.createVertexArray();
+    gl.bindVertexArray(this.instVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    this.instVbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.instVbo);
+    gl.bufferData(gl.ARRAY_BUFFER, 9 * 4 * 1024, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 36, 0);
+    gl.vertexAttribDivisor(1, 1);
+    gl.enableVertexAttribArray(2);
+    gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 36, 16);
+    gl.vertexAttribDivisor(2, 1);
+    gl.enableVertexAttribArray(3);
+    gl.vertexAttribPointer(3, 3, gl.FLOAT, false, 36, 24);
+    gl.vertexAttribDivisor(3, 1);
     gl.bindVertexArray(null);
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.CULL_FACE);
@@ -262,14 +306,8 @@ export class GpuRenderer {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
 
-    this.whiteTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, this.whiteTex);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
-
+    const maxLayers = gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS) || 256;
+    this.maxTiles = Math.min(this.maxTiles, maxLayers);
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
     this.lastInfo = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
   }
@@ -338,47 +376,78 @@ export class GpuRenderer {
     return this.analyze(layers).ok;
   }
 
-  _texture(tile) {
+  /* ---------------- 纹理数组 ---------------- */
+
+  _createAtlasTex(cap) {
     const gl = this.gl;
-    let e = this.tex.get(tile.canvas);
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+    gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.RGBA, 256, 256, cap, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
+  }
+
+  _growAtlas(kind, needed) {
+    const atlas = kind === 'mask' ? this.maskAtlas : this.layerAtlas;
+    if (needed > this.maxTiles) return false;
+    const cap = Math.min(this.maxTiles, Math.max(64, atlas.cap * 4, needed));
+    if (cap <= atlas.cap) return false;
+    const gl = this.gl;
+    const old = atlas.tex;
+    const oldCap = atlas.cap;
+    const tex = this._createAtlasTex(cap);
+    for (const [canvas, e] of atlas.slots) {
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+      gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, e.slot,
+        canvas.width, canvas.height, 1, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    }
+    if (old) gl.deleteTexture(old);
+    atlas.tex = tex;
+    atlas.cap = cap;
+    for (let i = oldCap; i < cap; i++) atlas.free.push(i);
+    return true;
+  }
+
+  _uploadAtlas(kind, canvas, slot) {
+    const atlas = kind === 'mask' ? this.maskAtlas : this.layerAtlas;
+    if (!atlas.tex) return;
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, atlas.tex);
+    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, slot,
+      canvas.width, canvas.height, 1, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+  }
+
+  _slotFor(kind, canvas, rev) {
+    const atlas = kind === 'mask' ? this.maskAtlas : this.layerAtlas;
+    let e = atlas.slots.get(canvas);
     if (!e) {
-      const tex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tile.canvas);
-      e = { tex, rev: tile.rev, last: this.frame };
-      this.tex.set(tile.canvas, e);
-    } else if (e.rev !== tile.rev) {
-      gl.bindTexture(gl.TEXTURE_2D, e.tex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tile.canvas);
-      e.rev = tile.rev;
-      e.last = this.frame;
+      if (!atlas.free.length) {
+        if (!this._growAtlas(kind, atlas.slots.size + 1)) return -1;
+      }
+      const slot = atlas.free.pop();
+      e = { slot, rev: -1, last: this.frame };
+      atlas.slots.set(canvas, e);
     }
     e.last = this.frame;
-    return e.tex;
+    if (e.rev !== rev) {
+      this._uploadAtlas(kind, canvas, e.slot);
+      e.rev = rev;
+    }
+    return e.slot;
   }
 
   _evict() {
-    const gl = this.gl;
-    if (this.tex.size > 64) {
-      for (const [canvas, e] of [...this.tex.entries()]) {
+    for (const atlas of [this.layerAtlas, this.maskAtlas]) {
+      if (atlas.slots.size <= 64) continue;
+      for (const [canvas, e] of [...atlas.slots]) {
         if (e.last < this.frame - 180) {
-          gl.deleteTexture(e.tex);
-          this.tex.delete(canvas);
+          atlas.free.push(e.slot);
+          atlas.slots.delete(canvas);
         }
       }
-    }
-    if (this.tex.size <= 900) return;
-    const entries = [...this.tex.entries()];
-    entries.sort((a, b) => a[1].last - b[1].last);
-    for (const [canvas, e] of entries) {
-      if (this.tex.size <= 800) break;
-      if (e.last === this.frame) continue;
-      gl.deleteTexture(e.tex);
-      this.tex.delete(canvas);
     }
   }
 
@@ -498,12 +567,6 @@ export class GpuRenderer {
     gl.bindVertexArray(null);
   }
 
-  _white() {
-    const gl = this.gl;
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.whiteTex);
-  }
-
   /* ---------------- 主体 ---------------- */
 
   /**
@@ -563,25 +626,57 @@ export class GpuRenderer {
     const gl = this.gl;
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    gl.useProgram(this.tileProg);
-    const u = this._setView(this.u.tile, view, cssW, cssH);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.uniform1i(u.tex, 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.uniform1i(u.mask, 1);
-    gl.uniform1f(u.hasMask, 0);
-    this._white();
-    gl.activeTexture(gl.TEXTURE0);
+    const items = [];
     for (const node of layers.layers) {
       if (!node.visible || node.opacity <= 0) continue;
-      gl.uniform1f(u.opacity, node.opacity);
       const s = node.surface;
       for (const t of s.tiles.values()) {
-        const r = s.tileRect(t.tx, t.ty);
-        gl.bindTexture(gl.TEXTURE_2D, this._texture(t));
-        this._drawQuad(u, r);
+        items.push({ s, t, opacity: node.opacity, mask: null });
       }
     }
+    this._drawBatch(items, view, cssW, cssH, false);
+  }
+
+  _drawBatch(items, view, cssW, cssH, maskAsAtlas) {
+    if (!items.length) return;
+    const gl = this.gl;
+    const need = items.length * 9;
+    if (this.batchData.length < need) this.batchData = new Float32Array(need * 2);
+    const d = this.batchData;
+    let n = 0;
+    for (const it of items) {
+      const slot = this._slotFor(maskAsAtlas ? 'mask' : 'layer', it.t.canvas, it.t.rev);
+      if (slot < 0) continue;
+      const ms = it.mask ? this._slotFor('mask', it.mask.canvas, it.mask.rev) : -1;
+      const r = it.s.tileRect(it.t.tx, it.t.ty);
+      d[n++] = r.x; d[n++] = r.y; d[n++] = r.w; d[n++] = r.h;
+      d[n++] = it.t.canvas.width / 256;
+      d[n++] = it.t.canvas.height / 256;
+      d[n++] = slot;
+      d[n++] = ms;
+      d[n++] = it.opacity;
+    }
+    const count = n / 9;
+    if (!count) return;
+    gl.useProgram(this.tileProg);
+    const u = this._setView(this.u.tile, view, cssW, cssH);
+    gl.uniform1i(u.atlas, 0);
+    gl.uniform1i(u.maskAtlas, 1);
+    const layer = this.layerAtlas;
+    const mask = this.maskAtlas;
+    const atlasA = maskAsAtlas ? mask : layer;
+    const atlasB = mask.tex ? mask : layer;
+    if (!atlasA.tex || !atlasB.tex) return;
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, atlasA.tex);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, atlasB.tex);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.instVbo);
+    gl.bufferData(gl.ARRAY_BUFFER, d.subarray(0, n), gl.DYNAMIC_DRAW);
+    gl.bindVertexArray(this.instVao);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+    gl.bindVertexArray(null);
+    this.batchCount = count;
   }
 
   _renderComplex(layers, view, cssW, cssH) {
@@ -657,35 +752,13 @@ export class GpuRenderer {
   }
 
   _drawLayerTiles(node, mask, view, cssW, cssH) {
-    const gl = this.gl;
-    gl.useProgram(this.tileProg);
-    const u = this._setView(this.u.tile, view, cssW, cssH);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.uniform1i(u.tex, 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.uniform1i(u.mask, 1);
-    gl.uniform1f(u.opacity, node.opacity);
-    gl.uniform1f(u.hasMask, 0);
-    this._white();
-    gl.activeTexture(gl.TEXTURE0);
-
+    const items = [];
     const s = node.surface;
     for (const t of s.tiles.values()) {
-      const r = s.tileRect(t.tx, t.ty);
-      gl.bindTexture(gl.TEXTURE_2D, this._texture(t));
       const mt = mask ? mask.getTile(t.tx, t.ty, false) : null;
-      if (mt) {
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, this._texture(mt));
-        gl.uniform1f(u.hasMask, 1);
-        gl.activeTexture(gl.TEXTURE0);
-      } else {
-        this._white();
-        gl.uniform1f(u.hasMask, 0);
-        gl.activeTexture(gl.TEXTURE0);
-      }
-      this._drawQuad(u, r);
+      items.push({ s, t, opacity: node.opacity, mask: mt });
     }
+    this._drawBatch(items, view, cssW, cssH, false);
   }
 
   _applyMaskToFbo(f, mask, view, cssW, cssH) {
@@ -693,21 +766,11 @@ export class GpuRenderer {
     this._bindFbo(f);
     gl.enable(gl.BLEND);
     gl.blendFuncSeparate(gl.ZERO, gl.SRC_ALPHA, gl.ZERO, gl.SRC_ALPHA);
-    gl.useProgram(this.tileProg);
-    const u = this._setView(this.u.tile, view, cssW, cssH);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.uniform1i(u.tex, 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.uniform1i(u.mask, 1);
-    gl.uniform1f(u.hasMask, 0);
-    gl.uniform1f(u.opacity, 1);
-    this._white();
-    gl.activeTexture(gl.TEXTURE0);
+    const items = [];
     for (const t of mask.tiles.values()) {
-      const r = mask.tileRect(t.tx, t.ty);
-      gl.bindTexture(gl.TEXTURE_2D, this._texture(t));
-      this._drawQuad(u, r);
+      items.push({ s: mask, t, opacity: 1, mask: null });
     }
+    this._drawBatch(items, view, cssW, cssH, true);
     gl.disable(gl.BLEND);
   }
 
@@ -749,12 +812,16 @@ export class GpuRenderer {
 
   dropTextures() {
     const gl = this.gl;
-    if (gl) {
-      for (const e of this.tex.values()) {
-        try { gl.deleteTexture(e.tex); } catch { /* context lost */ }
+    for (const atlas of [this.layerAtlas, this.maskAtlas]) {
+      if (!atlas) continue;
+      if (gl && atlas.tex) {
+        try { gl.deleteTexture(atlas.tex); } catch { /* context lost */ }
       }
+      atlas.tex = null;
+      atlas.cap = 0;
+      atlas.slots.clear();
+      atlas.free.length = 0;
     }
-    this.tex.clear();
     this._deleteFbos();
   }
 
@@ -763,8 +830,9 @@ export class GpuRenderer {
     const gl = this.gl;
     this.dropTextures();
     gl.deleteBuffer(this.vbo);
+    gl.deleteBuffer(this.instVbo);
     gl.deleteVertexArray(this.vao);
-    gl.deleteTexture(this.whiteTex);
+    gl.deleteVertexArray(this.instVao);
     for (const p of [this.tileProg, this.checkerProg, this.shadowProg, this.blitProg, this.compProg]) gl.deleteProgram(p);
     this.ok = false;
   }

@@ -1,10 +1,10 @@
 # 落笔生花 Luobishenghua
 
-一款面向绘画的桌面软件：瓦片化图层存储、压感笔刷引擎、PSD 分层互通、`.abr` 笔刷导入、原生工程 `.lbsh`。从 **beta12** 起采用 Photoshop 风格工作台，**beta13** 加入 WebGL2 合成，**beta14** 加入单列工具栏与可拖拽面板标签，**beta15** 把 GPU 合成扩展到组 / 蒙版 / 混合模式。
+一款面向绘画的桌面软件：瓦片化图层存储、压感笔刷引擎、PSD 分层互通、`.abr` 笔刷导入、原生工程 `.lbsh`。从 **beta12** 起采用 Photoshop 风格工作台，**beta13** 加入 WebGL2 合成，**beta14** 加入单列工具栏与可拖拽面板标签，**beta15** 把 GPU 合成扩展到组 / 蒙版 / 混合模式，**beta16** 用纹理数组 + instanced draw 把瓦片批量化。
 
 ![落笔生花工作台](docs/screenshot.png)
 
-> 当前版本：**beta15** · 平台：macOS / Windows（Tauri 2）
+> 当前版本：**beta16** · 平台：macOS / Windows（Tauri 2）
 >
 > 技术栈：HTML + CSS + JavaScript（无框架）+ Canvas 2D + Tauri 2（Rust 壳）
 >
@@ -24,11 +24,11 @@
 - **文件**：PSD 分层读写、PNG 导出、`.lbsh` 工程、自动保存、崩溃恢复、最近文件
 - **工作台**（beta12）：PS 式工具栏 / 选项栏 / 文档标签 / 标尺 / 面板坞 / 状态栏，可折叠与调整面板，浮动画笔面板，PS 风格拾色器
 - **面板坞**（beta14）：单列工具栏；标签可在颜色 / 图层 / 历史三个组之间拖拽重排、跨组停靠；浮动面板拖到标签栏即可并入；标签拖出画布即浮动；布局持久化
-- **GPU 合成**（beta13/15）：WebGL2 平铺图层渲染，平移 / 缩放 / 旋转不再每帧走 Canvas2D；beta15 支持图层组、图层 / 组蒙版、正片叠底 / 滤色 / 叠加 / 柔光 / 变暗 / 变亮 / 颜色减淡 / 线性减淡；剪贴蒙版 / 层级过深 / 超大瓦片自动回退，状态栏与「视图」菜单可见
+- **GPU 合成**（beta13/15/16）：WebGL2 平铺图层渲染，平移 / 缩放 / 旋转不再每帧走 Canvas2D；beta15 支持图层组、图层 / 组蒙版、正片叠底 / 滤色 / 叠加 / 柔光 / 变暗 / 变亮 / 颜色减淡 / 线性减淡；剪贴蒙版 / 层级过深 / 超大瓦片自动回退；beta16 瓦片进 256×256 纹理数组，简单路径一次 instanced draw 画完，状态栏与「视图」菜单可见
 
 ## 照片级界面说明
 
-beta12 按 Photoshop 的工作区逻辑重排；beta13 加入 GPU 合成；beta14 把面板变成真正可拖拽的标签组；beta15 扩展 GPU 组 / 蒙版 / 混合：
+beta12 按 Photoshop 的工作区逻辑重排；beta13 加入 GPU 合成；beta14 把面板变成真正可拖拽的标签组；beta15 扩展 GPU 组 / 蒙版 / 混合，beta16 把瓦片批量化：
 
 - 顶部：菜单栏 + 工具选项栏
 - 左侧：单列工具栏 + 前后景色井（24px 工具按钮，40px 宽）
@@ -41,13 +41,14 @@ beta12 按 Photoshop 的工作区逻辑重排；beta13 加入 GPU 合成；beta1
 
 ### GPU 合成
 
-- **简单路径**：普通图层 + 正常混合 + 无蒙版 / 无组时直接绘制到默认帧缓冲，最快
+- **简单路径**：普通图层 + 正常混合 + 无蒙版 / 无组时直接绘制到默认帧缓冲，最快；所有瓦片合并为一次 instanced draw
+- **纹理数组**：256×256 纹理数组存瓦片，图层 / 蒙版各一套；按需增长、按瓦片 rev 更新、LRU 释放槽位；复杂路径每层一次 draw call
 - **复杂路径**：图层组、图层 / 组蒙版、非正常混合走 screen-size FBO 合成；组先渲染到独立 FBO，再按不透明度 / 蒙版 / 混合模式并回父级；组嵌套上限 4 层
 - **支持的混合模式**：正片叠底 / 滤色 / 叠加 / 柔光 / 变暗 / 变亮 / 颜色减淡 / 线性减淡（lighter）；图层蒙版在瓦片 shader 中按 alpha 采样，组蒙版用 destination-in 乘到组 FBO
 - **回退**：剪贴蒙版、组嵌套 >4、瓦片数 >800 或像素 >200 MB 自动回退 Canvas2D，功能不受影响
 - 瓦片按修订号增量上传纹理，笔画只重传改动的瓦片；平移 / 缩放 / 旋转只做一次 GPU 绘制
 - 状态栏右侧显示 `GPU` / `CPU`；「视图 → GPU 合成（组 / 蒙版 / 混合）」可手动开关，`localStorage` 记忆
-- 基准（本机 M2，4000² / 20 层稀疏 / 144 MB，简单路径）：整屏合成 Canvas2D ≈ 18.5 ms → GPU ≈ 0.2 ms；视图重绘 ≈ 19 ms → 0.3 ms。复杂路径会多几次全屏 FBO pass，数字受文档、GPU、浏览器影响，仅作参考
+- 基准（本机 M2，4000² / 20 层稀疏 / 144 MB，简单路径）：整屏合成 Canvas2D ≈ 15.8 ms → GPU ≈ 0.4 ms；视图重绘 ≈ 13.2 ms → 0.1 ms。4000² / 50 层稀疏（732 瓦片 / 177 MB）单次 instanced draw 视图重绘 ≈ 0.2 ms。复杂路径会多几次全屏 FBO pass，数字受文档、GPU、浏览器影响，仅作参考
 
 ## 开发
 
@@ -89,10 +90,10 @@ CI 配置：`.github/workflows/build.yml`
 
 ```bash
 git add -A
-git commit -m "beta15: 具体改动"
-git tag -a v0.1.0-beta15 -m "落笔生花 beta15"
+git commit -m "beta16: 具体改动"
+git tag -a v0.1.0-beta16 -m "落笔生花 beta16"
 git push origin main
-git push origin v0.1.0-beta15
+git push origin v0.1.0-beta16
 ```
 
 > 标签必须以 `v` 开头才会触发 Release。版本号建议与 `CHANGELOG.md` 的 betaN 对应。
@@ -123,12 +124,12 @@ docs/               文档与截图
 
 ## 已知限制与路线图
 
-- 渲染仍在 Canvas 2D；超大画布 / 高刷笔迹需要 WebGL2/WebGPU 合成与笔刷批量绘制（GPU 简单图层 / 组 / 蒙版 / 混合已落地，draw call 批处理与笔刷 GPU 化待做）
+- 渲染仍在 Canvas 2D；超大画布 / 高刷笔迹需要 WebGL2/WebGPU 合成与笔刷批量绘制（GPU 简单 / 组 / 蒙版 / 混合、纹理数组 + instanced draw 已落地；笔刷印章 GPU 化 / OffscreenCanvas + Worker 待做）
 - 颜色管理仅 sRGB 8 位/通道，暂无 ICC / 16 位
 - 单一文档窗口；无多文档标签、无液化 / 滤镜
 - 面板仍是三个固定坞组：标签可组间拖拽 / 停靠，浮动面板可并入标签组，但尚未实现任意新建 / 拆分坞组（PS 的 group 全行为）
 - 测试以浏览器测试页 + 无头 Chrome 冒烟为主，尚未接入自动化 CI 测试
-- GPU 已支持普通图层 / 组 / 蒙版 / 8 种混合模式；剪贴蒙版、组嵌套 >4 层和超大瓦片仍回退 CPU，下一步做 draw call 批处理 / 纹理图集与笔刷 GPU 化
+- GPU 已支持普通图层 / 组 / 蒙版 / 8 种混合模式，瓦片走纹理数组 + instanced draw；剪贴蒙版、组嵌套 >4 层和超大瓦片仍回退 CPU，下一步做笔刷印章 GPU 化 / OffscreenCanvas + Worker
 - 文档空闲时仍会用 Canvas2D 合成一份 `engine.doc` 供导航器 / 吸管使用，复杂文档会有一次短暂空闲开销
 
 技术栈评估与演进建议见 [docs/TECH_STACK.md](docs/TECH_STACK.md)。

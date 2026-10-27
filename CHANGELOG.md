@@ -2,6 +2,26 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta16（2026-10-28）
+
+GPU 瓦片批量化：纹理数组 + instanced draw。
+
+GPU：
+- 瓦片不再一瓦片一张 texture：改成 256×256 `TEXTURE_2D_ARRAY`（图层 / 蒙版各一套），
+  按 `rev` 只更新对应层，容量 64→256→800 按需增长
+- 简单路径（普通图层 + 正常混合）所有瓦片合并成 **1 次 instanced draw**；
+  复杂路径（组 / 蒙版 / 混合）每个图层 1 次，组蒙版 1 次
+- 实例属性：tile rect / uv scale / atlas layer / mask layer / opacity；
+  片元 shader 用 sampler2DArray 采样，蒙版为 -1 时跳过
+- atlas 槽位 LRU 释放，resize / 关闭 GPU / 上下文丢失时整体释放；
+  瓦片上限仍 800 / 200MB，超出回退 Canvas2D
+- 4000² / 20 层稀疏（599 瓦片）：视图重绘 0.1ms；50 层稀疏（732 瓦片 / 177MB）
+  也在单次 instanced draw 内
+
+测试 / 文档：
+- test-gpu.html 62 项全部通过（含边缘瓦片、蒙版、组、8 种混合、混合后普通层）
+- bench-gpu 更新清理逻辑；版本、README、CHANGELOG、TECH_STACK、截图更新到 beta16
+
 ## beta15（2026-10-28）
 
 GPU 合成第二阶段：图层组 / 图层与组蒙版 / 混合模式。
