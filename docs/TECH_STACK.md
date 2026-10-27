@@ -48,7 +48,7 @@
 - 继续用 HTML/CSS/JS + Tauri；把 UI 组件（菜单、面板、滑块、拾色器）抽成可复用的小模块。
 - 引入 **TypeScript**（或至少 JSDoc + `checkJs`）和 **Vite**；保留 `app/` 静态结构，开发时用 Vite HMR。
 - 把 PSD / ABR / ZIP / 自动保存放进 **Web Worker**；缩略图用 OffscreenCanvas。
-- 加入 Playwright / Vitest，先把「打开 PSD → 画一笔 → 撤销 → 保存」做成端到端测试。
+- 已先用零依赖 `scripts/test-browser.mjs` 把 7 个浏览器测试页（268 项）接进 CI；后续再评估 Playwright / Vitest 做「打开 PSD → 画一笔 → 撤销 → 保存」的端到端测试。
 
 ### 中期（性能分水岭）
 
@@ -58,7 +58,8 @@
 > 自动回退 Canvas2D。4000² / 20 层稀疏简单栈的本机基准：整屏合成 15.8 ms → 0.4 ms，
 > 视图重绘 13.2 ms → 0.1 ms。beta14 面板标签已支持拖拽重组 / 停靠，单列工具栏也已落地。
 > beta16 已把瓦片放进 256×256 纹理数组，并用 instanced draw 合并：简单路径 1 次 draw call，复杂路径每层 1 次。
-> 下一步是笔刷印章 GPU 化 / OffscreenCanvas + Worker，以及 TypeScript + 自动化测试。
+> beta17 把 7 个测试页（268 项）接进无头 Chrome + CI。
+> 下一步是笔刷印章 GPU 化 / OffscreenCanvas + Worker，以及 TypeScript 迁移。
 
 - 在已落地的 WebGL2 简单 / 复杂合成（组 / 蒙版 / 混合）与纹理数组 + instanced draw 上继续做笔刷批绘制；后续评估 **WebGPU**（新设备优先），Canvas 2D 长期作为 fallback。
 - 笔刷印章改为 GPU 实例化/批绘制；瓦片作为纹理图集（atlas），避免每帧上传。
@@ -74,6 +75,6 @@
 
 ## 5. 一句话建议
 
-**不要换掉 HTML/CSS/JS，也不要把「像 PS」误解成「必须用 Adobe 的技术」。** 当前最值得投入的是：把笔刷印章 GPU 化和 Worker 化做起来，把重活移出主线程，把 UI 工程化。beta16 之后，界面、面板、GPU 组 / 蒙版 / 混合和瓦片批绘制都已跨过「像 PS」的门槛；下一阶段的瓶颈在笔刷管线与工程化，不在 CSS。
+**不要换掉 HTML/CSS/JS，也不要把「像 PS」误解成「必须用 Adobe 的技术」。** 当前最值得投入的是：把笔刷印章 GPU 化和 Worker 化做起来，把重活移出主线程，把 UI 工程化。beta17 之后，界面、面板、GPU 组 / 蒙版 / 混合、瓦片批绘制和自动化回归都已跨过「像 PS」的门槛；下一阶段的瓶颈在笔刷管线、TypeScript 与 Worker 化，不在 CSS。
 
 DeepSeek 自 beta12 起参与本项目的界面 / 面板 / GPU / 测试协作（2026）。

@@ -11,8 +11,30 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    name: Browser tests
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run browser tests
+        run: npm test
+        env:
+          CHROME_BIN: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+
   build:
     name: Build ${{ matrix.artifact }}
+    needs: test
     strategy:
       fail-fast: false
       max-parallel: 1

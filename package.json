@@ -8,7 +8,8 @@
     "tauri": "tauri",
     "dev": "tauri dev",
     "dev:web": "node scripts/serve.mjs",
-    "build": "tauri build"
+    "build": "tauri build",
+    "test": "node scripts/test-browser.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

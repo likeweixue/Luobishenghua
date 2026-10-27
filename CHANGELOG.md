@@ -2,6 +2,28 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta17（2026-10-28）
+
+自动化浏览器回归测试 + CI 门禁。
+
+测试：
+- 新增 `scripts/test-browser.mjs`：零依赖 Node 脚本，自动启动静态服务器和
+  headless Chrome，逐个跑 test-*.html，读取 `document.title` 与 `#out`，失败退出 1
+- 覆盖 7 个页面 / 268 项：test-engine 10、test-n1 28、test-n2 51、test-n3 30、
+  test-n5 41、test-tiles 46、test-gpu 62；全部通过
+- 支持 `CHROME_BIN`、`TEST_PAGES`、`TEST_TIMEOUT_MS`；自动清理 Chrome 进程 / 临时 profile
+- `npm test` 即可运行；本机无 Chrome 时给出清晰提示
+
+CI：
+- `.github/workflows/build.yml` 新增 `Browser tests`（macos-latest），
+  跑通 7 个页面 / 268 项
+- `Build macOS` / `Build Windows` 加 `needs: test`，测试失败不产出安装包
+- 推送 main / v* 标签都会先跑测试
+
+说明：
+- 产品 UI 与渲染逻辑本版无改动；版本号、README、CHANGELOG、TECH_STACK、截图更新到 beta17
+- 笔刷印章 GPU 化 / OffscreenCanvas + Worker、TypeScript 迁移仍是后续工作
+
 ## beta16（2026-10-28）
 
 GPU 瓦片批量化：纹理数组 + instanced draw。

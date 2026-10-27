@@ -1,10 +1,10 @@
 # 落笔生花 Luobishenghua
 
-一款面向绘画的桌面软件：瓦片化图层存储、压感笔刷引擎、PSD 分层互通、`.abr` 笔刷导入、原生工程 `.lbsh`。从 **beta12** 起采用 Photoshop 风格工作台，**beta13** 加入 WebGL2 合成，**beta14** 加入单列工具栏与可拖拽面板标签，**beta15** 把 GPU 合成扩展到组 / 蒙版 / 混合模式，**beta16** 用纹理数组 + instanced draw 把瓦片批量化。
+一款面向绘画的桌面软件：瓦片化图层存储、压感笔刷引擎、PSD 分层互通、`.abr` 笔刷导入、原生工程 `.lbsh`。从 **beta12** 起采用 Photoshop 风格工作台，**beta13** 加入 WebGL2 合成，**beta14** 加入单列工具栏与可拖拽面板标签，**beta15** 把 GPU 合成扩展到组 / 蒙版 / 混合模式，**beta16** 用纹理数组 + instanced draw 把瓦片批量化，**beta17** 接入无头 Chrome 自动化回归测试。
 
 ![落笔生花工作台](docs/screenshot.png)
 
-> 当前版本：**beta16** · 平台：macOS / Windows（Tauri 2）
+> 当前版本：**beta17** · 平台：macOS / Windows（Tauri 2）
 >
 > 技术栈：HTML + CSS + JavaScript（无框架）+ Canvas 2D + Tauri 2（Rust 壳）
 >
@@ -79,21 +79,34 @@ macOS 产物在 `src-tauri/target/release/bundle/macos/`（`.app`）与 `bundle/
 
 > GPU 合成要求 WebGL2；不支持的环境自动使用 Canvas2D，不会影响使用。复杂路径的 FBO 还会占用少量显存，剪贴蒙版仍走 CPU。
 
+## 测试
+
+```bash
+npm test
+# 需要本机安装 Google Chrome / Chromium；可用 CHROME_BIN 指定路径
+# 自动启动静态服务器 + headless Chrome，跑 7 个页面 / 268 项：
+# test-engine 10、test-n1 28、test-n2 51、test-n3 30、
+# test-n5 41、test-tiles 46、test-gpu 62
+# 只跑某个页面：TEST_PAGES=test-gpu.html npm test
+```
+
+CI 里 `Browser tests` 任务会在 macOS runner 上先跑这组测试，通过后 `Build macOS` / `Build Windows` 才会开始。
+
 ## GitHub 打包 / 发版
 
 CI 配置：`.github/workflows/build.yml`
 
-- 推送到 `main`：自动构建 macOS `.app` 与 Windows `.exe`，作为 Actions artifact 上传
-- 推送 `v*` 标签：自动构建并把安装包附到 GitHub Release
+- 推送到 `main` / `v*`：先跑 7 个测试页（268 项），通过后再构建 macOS / Windows 产物
+- 推送 `v*` 标签：测试通过后自动构建并把安装包附到 GitHub Release
 
 每次迭代建议的流程：
 
 ```bash
 git add -A
-git commit -m "beta16: 具体改动"
-git tag -a v0.1.0-beta16 -m "落笔生花 beta16"
+git commit -m "beta17: 具体改动"
+git tag -a v0.1.0-beta17 -m "落笔生花 beta17"
 git push origin main
-git push origin v0.1.0-beta16
+git push origin v0.1.0-beta17
 ```
 
 > 标签必须以 `v` 开头才会触发 Release。版本号建议与 `CHANGELOG.md` 的 betaN 对应。
@@ -128,7 +141,7 @@ docs/               文档与截图
 - 颜色管理仅 sRGB 8 位/通道，暂无 ICC / 16 位
 - 单一文档窗口；无多文档标签、无液化 / 滤镜
 - 面板仍是三个固定坞组：标签可组间拖拽 / 停靠，浮动面板可并入标签组，但尚未实现任意新建 / 拆分坞组（PS 的 group 全行为）
-- 测试以浏览器测试页 + 无头 Chrome 冒烟为主，尚未接入自动化 CI 测试
+- 测试已接入 `npm test`（零依赖 Node + headless Chrome，7 个页面 / 268 项）和 CI `Browser tests` 任务；GPU 页面需要 WebGL2
 - GPU 已支持普通图层 / 组 / 蒙版 / 8 种混合模式，瓦片走纹理数组 + instanced draw；剪贴蒙版、组嵌套 >4 层和超大瓦片仍回退 CPU，下一步做笔刷印章 GPU 化 / OffscreenCanvas + Worker
 - 文档空闲时仍会用 Canvas2D 合成一份 `engine.doc` 供导航器 / 吸管使用，复杂文档会有一次短暂空闲开销
 
