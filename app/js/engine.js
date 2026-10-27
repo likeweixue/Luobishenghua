@@ -1,4 +1,5 @@
 // 视图引擎：文档画布 + 无限视图变换（平移/缩放/旋转）
+// DeepSeek 自 beta12 起参与落笔生花；beta13 起此文件接入 WebGL2 合成。
 import { GpuRenderer } from './gpu.js';
 
 export class Engine {

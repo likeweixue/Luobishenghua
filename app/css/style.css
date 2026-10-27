@@ -1,5 +1,6 @@
 /* ==========================================================================
    落笔生花 · Photoshop 风格工作台
+   DeepSeek 自 beta12 起参与界面 / 面板交互 / GPU 合成与测试；beta14 单列工具栏与标签拖拽。
    设计基准：Photoshop 2024/2025 深灰主题 —— 紧凑、扁平、1px 分隔线、
    面板坞 + 工具选项栏 + 文档标签 + 标尺 + 状态栏。
    ========================================================================== */
@@ -30,7 +31,7 @@
   --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
           "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   --mono: "SF Mono", "Menlo", "Consolas", monospace;
-  --toolbar-w: 54px;
+  --toolbar-w: 40px;
   --dock-w: 296px;
 }
 
@@ -358,7 +359,7 @@ body.tauri-mac #menubar { padding-left: 80px; }
   flex: 0 0 var(--toolbar-w);
   background: var(--c-bar);
   border-right: 1px solid var(--c-line);
-  padding: 5px 3px;
+  padding: 5px 2px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -369,14 +370,14 @@ body.tauri-mac #menubar { padding-left: 80px; }
 
 .tool-list {
   display: grid;
-  grid-template-columns: repeat(2, 23px);
+  grid-template-columns: 24px;
   gap: 3px;
   justify-content: center;
 }
 
 .tool-list button {
   position: relative;
-  width: 23px; height: 23px;
+  width: 24px; height: 24px;
   padding: 0;
   border: 0;
   border-radius: 3px;
@@ -404,7 +405,7 @@ body.tauri-mac #menubar { padding-left: 80px; }
 }
 
 .toolbar-sep {
-  width: 30px;
+  width: 24px;
   height: 1px;
   background: #414141;
   margin: 8px 0;
@@ -414,14 +415,14 @@ body.tauri-mac #menubar { padding-left: 80px; }
 /* 前景 / 背景色 */
 .color-wells {
   position: relative;
-  width: 44px;
-  height: 46px;
+  width: 34px;
+  height: 38px;
   flex: none;
   margin-top: 2px;
 }
 .well {
   position: absolute;
-  width: 24px; height: 24px;
+  width: 20px; height: 20px;
   padding: 0;
   border: 1px solid #111;
   border-radius: 2px;
@@ -431,12 +432,12 @@ body.tauri-mac #menubar { padding-left: 80px; }
 }
 .well span { display: block; width: 100%; height: 100%; }
 .well-fg { left: 0; top: 0; z-index: 2; }
-.well-bg { left: 16px; top: 16px; z-index: 1; }
+.well-bg { left: 13px; top: 14px; z-index: 1; }
 .well:hover { box-shadow: 0 0 0 1px #9a9a9a; }
 
 .well-ic {
   position: absolute;
-  width: 14px; height: 14px;
+  width: 12px; height: 12px;
   padding: 0;
   border: 0;
   border-radius: 2px;
@@ -444,10 +445,10 @@ body.tauri-mac #menubar { padding-left: 80px; }
   color: #a0a0a0;
   display: flex; align-items: center; justify-content: center;
 }
-.well-ic .ic { width: 12px; height: 12px; stroke-width: 1.8; }
+.well-ic .ic { width: 11px; height: 11px; stroke-width: 1.8; }
 .well-ic:hover { color: #fff; background: #414141; }
-.well-swap { right: -4px; top: -4px; }
-.well-default { left: -4px; bottom: -4px; }
+.well-swap { right: -2px; top: -2px; }
+.well-default { left: -2px; bottom: -2px; }
 
 .toolbar-spacer { flex: 1; }
 
@@ -665,6 +666,17 @@ body.panels-hidden #floating-layer { display: none; }
 .dock-group[data-group="history"] { flex-basis: 194px; }
 .dock-group.dock-grow { flex: 1 1 0; min-height: 150px; }
 .dock-group.collapsed { flex: 0 0 29px !important; }
+.dock-group.empty-group { flex: 0 0 29px !important; }
+.dock-group.empty-group .dock-body { display: none; }
+.dock-group.empty-group .dock-tabs::after {
+  content: "拖入面板";
+  color: #6f6f6f;
+  font-size: 9.5px;
+  display: flex;
+  align-items: center;
+  padding-left: 8px;
+  pointer-events: none;
+}
 .dock-group.collapsed .dock-body { display: none; }
 .dock-group.collapsed .dock-toggle { transform: rotate(-90deg); }
 
@@ -684,9 +696,15 @@ body.panels-hidden #floating-layer { display: none; }
   align-items: stretch;
   min-width: 0;
   flex: 1;
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+.dock-tabs::-webkit-scrollbar { height: 0; }
 .dock-tab {
   position: relative;
+  flex: none;
   padding: 0 10px;
   border: 0;
   border-right: 1px solid transparent;
@@ -702,6 +720,38 @@ body.panels-hidden #floating-layer { display: none; }
   box-shadow: inset 0 1px 0 #4a4a4a;
 }
 .dock-tab.tab-hidden { display: none; }
+.dock-tab.dragging { opacity: .35; }
+
+/* 面板拖拽：插入线 / 目标高亮 / 跟随鼠标的标签 */
+.dock-drop-line {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--c-accent-2);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .35);
+  border-radius: 1px;
+  pointer-events: none;
+  z-index: 6;
+}
+.dock-group.drop-hot .dock-head { background: #3e5366; }
+.dock-group.drop-hot .dock-tab.active { background: #36536d; }
+.dock-drag-ghost {
+  position: fixed;
+  z-index: 900;
+  padding: 4px 9px;
+  border: 1px solid #4b95dd;
+  border-radius: 3px;
+  background: rgba(38, 49, 60, .96);
+  color: #eef6ff;
+  font-size: 11px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .55);
+  pointer-events: none;
+  white-space: nowrap;
+}
+body.dock-dragging { cursor: grabbing; }
+body.dock-dragging * { cursor: grabbing !important; }
 
 .dock-btn {
   width: 24px;
@@ -727,6 +777,8 @@ body.panels-hidden #floating-layer { display: none; }
   background: var(--c-panel);
 }
 .dock-body > .panel { position: absolute; inset: 0; display: none; }
+.dock-body > .panel > .panel-title { display: none; }
+.dock-body > .panel.active > .panel-title { display: none; }
 .dock-body > .panel.active { display: flex; flex-direction: column; }
 .dock-group.no-tabs .dock-body::after {
   content: "面板已关闭 · 在「窗口」菜单中重新打开";

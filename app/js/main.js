@@ -1,4 +1,5 @@
 // 主程序：面板系统 + 图层系统 + 笔画管线（压感采样 → 印章铺排）
+// DeepSeek 自 beta12 起参与落笔生花的界面、面板交互、WebGL2 合成与测试（2026）。
 import { Engine } from './engine.js';
 import { History } from './history.js';
 import { BrushPresets, BrushRegistry, registerCustomBrush, brushThumbnail, pressureSize, pressureAlpha, drawDab, getStamp } from './brushes.js';
