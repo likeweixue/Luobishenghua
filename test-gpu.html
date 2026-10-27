@@ -15,6 +15,7 @@
 <script type="module">
 import { Engine } from './app/js/engine.js';
 import { LayerStack } from './app/js/layers.js';
+import { maskFromCanvas } from './app/js/tiles.js';
 
 const out = [];
 let pass = 0, fail = 0;
@@ -39,21 +40,108 @@ function block(surface, color, x, y, w, h) {
 }
 
 function makeStack() {
+  // LayerStack 构造时已自带「纸张 + 图层 1」，这里复用，避免多出一张纸
   const s = new LayerStack(400, 300);
-  const paper = s._create('纸张');
-  paper.locked = true;
-  paper.surface.fill('#ffffff');
-  s.layers.push(paper);
-  const l1 = s._create('色块');
+  const l1 = s.layers[1];
+  l1.name = '色块';
   block(l1.surface, '#e24b4a', 20, 20, 80, 60);    // 红
   block(l1.surface, '#2f6fa8', 200, 100, 120, 80); // 蓝
-  s.layers.push(l1);
   const l2 = s._create('半透明');
   l2.opacity = 0.5;
   block(l2.surface, '#2f9e75', 120, 60, 120, 100); // 绿 50%
   s.layers.push(l2);
   s.activeId = l2.id;
   return s;
+}
+
+function maskedStack() {
+  const s = makeStack();
+  const l = s.layers[2];
+  const mc = document.createElement('canvas');
+  mc.width = 400; mc.height = 300;
+  const mctx = mc.getContext('2d');
+  mctx.fillStyle = '#ffffff';
+  mctx.fillRect(0, 0, 400, 300);
+  mctx.clearRect(150, 100, 120, 90);
+  l.mask = { surface: maskFromCanvas(mc, 400, 300), enabled: true };
+  return s;
+}
+
+function groupedStack() {
+  const s = makeStack();
+  const g = s.addGroup();
+  s.moveIntoGroup(g.id, s.layers[1].id);
+  s.moveIntoGroup(g.id, s.layers[1].id);
+  g.opacity = 0.8;
+  return s;
+}
+
+function groupMaskedStack() {
+  const s = groupedStack();
+  const g = s.layers[s.layers.length - 1];
+  g.opacity = 1;
+  const mc = document.createElement('canvas');
+  mc.width = 400; mc.height = 300;
+  const mctx = mc.getContext('2d');
+  mctx.fillStyle = '#ffffff';
+  mctx.fillRect(0, 0, 400, 300);
+  mctx.clearRect(0, 0, 200, 300);
+  g.mask = { surface: maskFromCanvas(mc, 400, 300), enabled: true };
+  return s;
+}
+
+function groupBlendStack(mode) {
+  const s = groupedStack();
+  const g = s.layers[s.layers.length - 1];
+  const bg = s._create('底色');
+  block(bg.surface, '#e8c34a', 0, 0, 400, 300);
+  s.layers.splice(1, 0, bg);
+  g.opacity = 1;
+  g.blend = mode;
+  return s;
+}
+
+function blendWithTopStack(mode) {
+  const s = makeStack();
+  const l2 = s.layers[2];
+  l2.opacity = 1;
+  l2.blend = mode;
+  const top = s._create('顶层');
+  top.opacity = 0.5;
+  block(top.surface, '#d24b8a', 180, 100, 120, 80);
+  s.layers.push(top);
+  s.activeId = top.id;
+  return s;
+}
+
+function blendStack(mode) {
+  const s = makeStack();
+  const l = s.layers[2];
+  l.opacity = 1;
+  l.blend = mode;
+  return s;
+}
+
+async function runPair(name, build, points, tol = 5) {
+  const s2 = build();
+  const s3 = build();
+  const e2x = new Engine(c2d, 400, 300);
+  e2x.layers = s2;
+  e2x.resize();
+  setView(e2x, 1, 20, 10);
+  const e3x = new Engine(c2dx, 400, 300, gl);
+  e3x.layers = s3;
+  e3x.resize();
+  setView(e3x, 1, 20, 10);
+  e3x.scheduleDocSync = () => {};
+  check(e3x.gpuActive(), name + ' 启用 GPU 路径', e3x.gpu && e3x.gpu.lastPlan && e3x.gpu.lastPlan.reason);
+  if (!e3x.gpuActive()) return;
+  e2x.render();
+  e3x.render();
+  await new Promise(r => requestAnimationFrame(r));
+  for (const p of points) {
+    await compareAt(e2x, e3x, name + ' · ' + p.label, { x: p.x, y: p.y }, tol);
+  }
 }
 
 function setView(engine, scale, tx, ty, rot = 0) {
@@ -132,30 +220,47 @@ try {
   await compareAt(e2, e3, '缩放/旋转后蓝块一致', { x: 240, y: 120 }, 4);
   await compareAt(e2, e3, '缩放/旋转后半透明合成一致', { x: 150, y: 100 }, 4);
 
+  log('GPU 组 / 蒙版 / 混合模式');
+  await runPair('图层蒙版', maskedStack, [
+    { label: '绿色可见区', x: 130, y: 80 },
+    { label: '蒙版挖空区', x: 180, y: 120 },
+    { label: '未被蒙版的蓝块', x: 250, y: 120 },
+  ], 5);
+  await runPair('图层组 80%', groupedStack, [
+    { label: '红色 80%', x: 40, y: 40 },
+    { label: '绿色合成', x: 150, y: 100 },
+    { label: '白纸', x: 330, y: 30 },
+  ], 6);
+  await runPair('组蒙版', groupMaskedStack, [
+    { label: '组蒙版显示区', x: 250, y: 130 },
+    { label: '组蒙版隐藏区', x: 100, y: 130 },
+  ], 6);
+  await runPair('混合后继续画普通层', () => blendWithTopStack('multiply'), [
+    { label: '混合+顶层', x: 220, y: 120 },
+    { label: '混合区外', x: 130, y: 80 },
+  ], 7);
+  await runPair('组混合 multiply', () => groupBlendStack('multiply'), [
+    { label: '组内容·绿块', x: 150, y: 130 },
+    { label: '组内容·蓝块', x: 250, y: 130 },
+    { label: '组内容·红块', x: 40, y: 50 },
+  ], 7);
+  for (const mode of ['multiply', 'screen', 'overlay', 'soft-light', 'darken', 'lighten', 'color-dodge', 'lighter']) {
+    await runPair('混合 ' + mode, () => blendStack(mode), [
+      { label: '白底上', x: 130, y: 80 },
+      { label: '蓝块上', x: 220, y: 120 },
+      { label: '红块上', x: 150, y: 100 },
+    ], 7);
+  }
+
   log('回退条件');
-  const s4 = makeStack();
-  const l = s4.layers[1];
-  const m = s4.addMask(l.id);
-  const e4 = new Engine(c2dx, 400, 300, gl);
-  e4.layers = s4;
-  e4.resize();
-  setView(e4, 1, 20, 10);
-  check(!e4.gpuActive(), '含蒙版图层回退 Canvas2D');
-  e4.render();
+  const sc = makeStack();
+  sc.layers[2].clipping = true;
+  const ec = new Engine(c2dx, 400, 300, gl);
+  ec.layers = sc;
+  ec.resize();
+  check(!ec.gpuActive(), '剪贴蒙版回退 Canvas2D');
+  ec.render();
   check(true, '回退渲染不抛异常');
-
-  const s5 = makeStack();
-  const g = s5.addGroup();
-  const e5 = new Engine(c2dx, 400, 300, gl);
-  e5.layers = s5;
-  e5.resize();
-  check(!e5.gpuActive(), '含图层组回退 Canvas2D');
-
-  const s6 = makeStack();
-  s6.setBlend('multiply');
-  const e6 = new Engine(c2dx, 400, 300, gl);
-  e6.layers = s6;
-  check(!e6.gpuActive(), '非正常混合模式回退 Canvas2D');
 
   log('瓦片修订号');
   const before = e3.texRevProbe = [...s3.layers[1].surface.tiles.values()][0]?.rev || 0;

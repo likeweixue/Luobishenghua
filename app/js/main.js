@@ -1103,7 +1103,7 @@ function updateStatus() {
     gpuEl.title = active
       ? ('WebGL2 合成' + (engine.gpu && engine.gpu.lastInfo ? ' · ' + engine.gpu.lastInfo : ''))
       : (engine.gpu && engine.gpu.ok && engine.gpuEnabled
-        ? '当前图层结构（组 / 蒙版 / 剪贴 / 混合模式或瓦片过多）已回退 Canvas2D'
+        ? '当前图层结构（剪贴蒙版 / 组嵌套过深 / 瓦片超限）已回退 Canvas2D'
         : (engine.gpu && !engine.gpu.ok ? '当前环境不支持 WebGL2，使用 Canvas2D' : 'Canvas2D 合成'));
   }
   updateDocTab();
