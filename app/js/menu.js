@@ -233,6 +233,12 @@ export function initMenuBar(actions) {
         { label: '实际像素', shortcut: '⌘1', action: 'zoom100' },
         { sep: true },
         { label: '标尺', checked: actions.rulersOn ? actions.rulersOn() : false, action: 'toggleRulers' },
+        {
+          label: 'GPU 合成（实验）',
+          checked: actions.gpuOn ? actions.gpuOn() : false,
+          disabled: actions.gpuAvailable ? !actions.gpuAvailable() : false,
+          action: 'toggleGpu',
+        },
         { sep: true },
         { label: '逆时针旋转 15°', action: 'rotateLeft' },
         { label: '顺时针旋转 15°', action: 'rotateRight' },
@@ -271,7 +277,14 @@ export function initMenuBar(actions) {
   function openDropdown(menu, anchorEl) {
     closeAll();
     anchorEl.classList.add('open');
-    const items = menu.dynamic ? menu.dynamic() : menu.items;
+    const rawItems = menu.dynamic ? menu.dynamic() : menu.items;
+    // 菜单项里允许写 action: 'saveProject' 这样的字符串；在这里解析成函数。
+    // （面板菜单 / 工具组菜单传入的本来就是函数，保持不变。）
+    const items = rawItems.map(item => {
+      if (!item || item.sep || typeof item.action !== 'string') return item;
+      const fn = actions[item.action];
+      return { ...item, action: typeof fn === 'function' ? fn : () => {} };
+    });
     showMenuAt(anchorEl, items, { align: 'left' });
     const instance = activeMenu;
     const oldCleanup = instance.cleanup;
@@ -312,9 +325,9 @@ export function aboutDialog() {
   showModal('关于落笔生花', `
     <div class="about">
       <div class="about-name">落笔生花</div>
-      <div class="about-en">LUOBISHENGHUA · beta12 · Photoshop 风格工作台</div>
+      <div class="about-en">LUOBISHENGHUA · beta13 · Photoshop 风格工作台</div>
       <p>一款正在生长的专业绘画软件。</p>
-      <p>瓦片化图层存储（大画布 / 多图层）· 压感笔刷引擎<br>图层组 / 蒙版 / 剪贴蒙版 · 选区 / 自由变换<br>涂抹 · 油漆桶 · 渐变 · 吸管 · 可调压感曲线与倾斜<br>PSD 分层互通 · .abr 笔刷生态 · 原生工程 .lbsh<br>增量撤销 · 自动保存与崩溃恢复 · 全部为手写零依赖实现</p>
+      <p>瓦片化图层存储（大画布 / 多图层）· WebGL2 GPU 合成<br>压感笔刷引擎<br>图层组 / 蒙版 / 剪贴蒙版 · 选区 / 自由变换<br>涂抹 · 油漆桶 · 渐变 · 吸管 · 可调压感曲线与倾斜<br>PSD 分层互通 · .abr 笔刷生态 · 原生工程 .lbsh<br>增量撤销 · 自动保存与崩溃恢复 · 全部为手写零依赖实现</p>
       <p class="about-credit">开发：WorkBuddy × likeweixue</p>
     </div>`);
 }

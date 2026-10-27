@@ -1,6 +1,6 @@
 name: Build Desktop (macOS + Windows)
 
-# 触发：推送到 main 自动构建并上传产物；推送 v* 标签自动发 Release 附带安装包
+# 推送到 main：构建并上传 artifact；推送 v* 标签：构建并发布 Release
 on:
   push:
     branches: [main]
@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   build:
+    name: Build ${{ matrix.artifact }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -19,19 +20,10 @@ jobs:
         include:
           - platform: macos-latest
             bundle: app,dmg
-            artifact: macos
-            paths: |
-              src-tauri/target/release/bundle/macos/*.app
-              src-tauri/target/release/bundle/dmg/*.dmg
-            release_files: |
-              src-tauri/target/release/bundle/dmg/*.dmg
+            artifact: macOS
           - platform: windows-latest
             bundle: nsis
-            artifact: windows
-            paths: |
-              src-tauri/target/release/bundle/nsis/*.exe
-            release_files: |
-              src-tauri/target/release/bundle/nsis/*.exe
+            artifact: Windows
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
@@ -59,11 +51,41 @@ jobs:
         with:
           args: --bundles ${{ matrix.bundle }}
 
+      # Tauri 会用中文 productName 生成 `_0.1.0_...` 这类文件名；
+      # 这里统一改成 luobishenghua-<ref>-<platform>.*，方便下载和分发。
+      - name: Package artifacts (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          safe_ref="${GITHUB_REF_NAME//\//-}"
+          name="luobishenghua-${safe_ref}-macos"
+          mkdir -p dist
+          APP=$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
+          DMG=$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)
+          test -n "$APP"
+          test -n "$DMG"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/${name}.app.zip"
+          cp "$DMG" "dist/${name}.dmg"
+          ls -lh dist
+
+      - name: Package artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $safeRef = $env:GITHUB_REF_NAME -replace '/', '-'
+          $name = "luobishenghua-$safeRef-windows"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $exe = Get-ChildItem "src-tauri/target/release/bundle/nsis" -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw "No NSIS exe found" }
+          Copy-Item $exe.FullName "dist/${name}.exe"
+          Get-ChildItem dist
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: luobishenghua-${{ matrix.artifact }}
-          path: ${{ matrix.paths }}
+          path: dist/*
           if-no-files-found: error
           retention-days: 30
 
@@ -72,7 +94,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: 落笔生花 ${{ github.ref_name }}
-          files: ${{ matrix.release_files }}
+          files: dist/*
           fail_on_unmatched_files: true
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'beta') }}

@@ -1,6 +1,8 @@
 // 视图引擎：文档画布 + 无限视图变换（平移/缩放/旋转）
+import { GpuRenderer } from './gpu.js';
+
 export class Engine {
-  constructor(displayCanvas, docW = 1600, docH = 1600) {
+  constructor(displayCanvas, docW = 1600, docH = 1600, glCanvas = null) {
     this.canvas = displayCanvas;
     this.ctx = displayCanvas.getContext('2d');
     this.docW = docW;
@@ -22,6 +24,81 @@ export class Engine {
     this.gradientPreview = null; // 渐变拖拽预览
     this.antsPhase = 0;      // 蚂蚁线动画相位（屏幕像素）
     this.layers = null;   // 图层栈（M2 起由 LayerStack 接管）
+
+    // GPU 合成（可选）：简单平铺图层走 WebGL2，复杂结构自动回退 Canvas2D
+    this.glCanvas = glCanvas || null;
+    this.gpuEnabled = true;
+    this.gpu = glCanvas ? new GpuRenderer(glCanvas) : null;
+    this.onGpuChange = null;
+    if (this.gpu) this.gpu.onLost = () => { this.render(); if (this.onGpuChange) this.onGpuChange(); };
+    this.onDocSync = null;   // doc 画布空闲合成完成后的回调（导航器等）
+    this._docTimer = 0;
+    this._gpuLast = false;
+  }
+
+  // 进入/离开 GPU 模式时同步状态；离开时释放纹理，避免复杂图层回退后仍占显存
+  _syncGpuMode() {
+    const on = this.gpuActive();
+    if (!on && this._gpuLast && this.gpu) this.gpu.dropTextures();
+    this._gpuLast = on;
+    return on;
+  }
+
+  /** 当前帧是否走 GPU 路径（结构不满足或 WebGL 不可用时为 false） */
+  gpuActive() {
+    return !!(this.gpu && this.gpu.ok && this.gpuEnabled && this.layers && this.gpu.canRender(this.layers));
+  }
+
+  /** 运行时开关；关闭时清空 GL 画布并立刻走 Canvas2D */
+  setGpuEnabled(on) {
+    this.gpuEnabled = !!on;
+    if (!this.gpuEnabled && this.gpu) this.gpu.clear();
+    this._caches = null;
+    this.render();
+  }
+
+  _renderGpu() {
+    if (!this.gpu || !this.gpu.ok) return false;
+    try {
+      return this.gpu.render(this.layers, this.view, this.canvas.clientWidth, this.canvas.clientHeight, this.dpr);
+    } catch (err) {
+      console.warn('[GPU] render failed, fallback Canvas2D', err);
+      this.gpu.ok = false;
+      return false;
+    }
+  }
+
+  // GPU 模式下 2D 画布只画选区/变换/渐变预览等叠加层
+  _paintOverlaysOnly() {
+    const ctx = this.ctx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this._paintOverlays();
+  }
+
+  // doc 画布（导航器 / 吸管 / 测试用）空闲合成，避免每帧 CPU 全量合成
+  scheduleDocSync() {
+    if (this._docTimer) clearTimeout(this._docTimer);
+    this._docTimer = setTimeout(() => {
+      this._docTimer = 0;
+      if (!this.layers) return;
+      this._compositeDoc();
+      this._docValid = true;
+      if (this.onDocSync) this.onDocSync();
+    }, 160);
+  }
+
+  syncDocNow() {
+    if (this._docTimer) {
+      clearTimeout(this._docTimer);
+      this._docTimer = 0;
+    }
+    if (!this.layers) return;
+    this._compositeDoc();
+    this._docValid = true;
+    if (this.onDocSync) this.onDocSync();
   }
 
   // 把文档中的某个点移动到屏幕中心（导航器用）
@@ -307,6 +384,12 @@ export class Engine {
       this._fireRender();
       return;
     }
+    if (this._syncGpuMode() && this._renderGpu()) {
+      this._paintOverlaysOnly();
+      this.scheduleDocSync();
+      this._fireRender();
+      return;
+    }
     const paperWasDirty = this._paperDirty || !this._paper;
     if (paperWasDirty) this._buildPaper();
 
@@ -324,6 +407,11 @@ export class Engine {
   // 只重绘屏幕（不重新合成图层）：平移/缩放/旋转时用
   renderViewOnly() {
     if (!this.canvas.width || !this.canvas.height) {
+      this._fireRender();
+      return;
+    }
+    if (this._syncGpuMode() && this._renderGpu()) {
+      this._paintOverlaysOnly();
       this._fireRender();
       return;
     }

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>GPU TEST</title>
+<style>
+  body{background:#1b1b1d;color:#ddd;font:12px/1.6 -apple-system,monospace;padding:16px}
+  pre{white-space:pre-wrap}
+  canvas{position:absolute;left:-20000px;top:0}
+  #gl{position:absolute;left:-20000px;top:0}
+</style></head>
+<body>
+<canvas id="c2d" width="440" height="340"></canvas>
+<canvas id="c2dx" width="440" height="340"></canvas>
+<canvas id="gl" width="440" height="340"></canvas>
+<pre id="out">running…</pre>
+<script type="module">
+import { Engine } from './app/js/engine.js';
+import { LayerStack } from './app/js/layers.js';
+
+const out = [];
+let pass = 0, fail = 0;
+const check = (ok, name, detail = '') => {
+  if (ok) { pass++; out.push('  ✅ ' + name); }
+  else { fail++; out.push('  ❌ ' + name + (detail ? ' — ' + detail : '')); }
+};
+const log = (s) => { out.push(s); document.getElementById('out').textContent = out.join('\n'); };
+
+const c2d = document.getElementById('c2d');
+const c2dx = document.getElementById('c2dx');
+const gl = document.getElementById('gl');
+for (const c of [c2d, c2dx, gl]) { c.style.width = '440px'; c.style.height = '340px'; }
+
+function block(surface, color, x, y, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const cc = c.getContext('2d');
+  cc.fillStyle = color;
+  cc.fillRect(0, 0, w, h);
+  surface.putCanvas(c, x, y);
+}
+
+function makeStack() {
+  const s = new LayerStack(400, 300);
+  const paper = s._create('纸张');
+  paper.locked = true;
+  paper.surface.fill('#ffffff');
+  s.layers.push(paper);
+  const l1 = s._create('色块');
+  block(l1.surface, '#e24b4a', 20, 20, 80, 60);    // 红
+  block(l1.surface, '#2f6fa8', 200, 100, 120, 80); // 蓝
+  s.layers.push(l1);
+  const l2 = s._create('半透明');
+  l2.opacity = 0.5;
+  block(l2.surface, '#2f9e75', 120, 60, 120, 100); // 绿 50%
+  s.layers.push(l2);
+  s.activeId = l2.id;
+  return s;
+}
+
+function setView(engine, scale, tx, ty, rot = 0) {
+  engine.view.scale = scale;
+  engine.view.rotation = rot;
+  engine.view.tx = tx;
+  engine.view.ty = ty;
+  engine._paperDirty = true;
+}
+
+function screenOf(view, x, y) {
+  const c = Math.cos(view.rotation), s = Math.sin(view.rotation);
+  return [view.tx + (x * c - y * s) * view.scale, view.ty + (x * s + y * c) * view.scale];
+}
+
+function read2d(engine, x, y) {
+  const dpr = engine.dpr;
+  const d = engine.ctx.getImageData(Math.round(x * dpr), Math.round(y * dpr), 1, 1).data;
+  return [d[0], d[1], d[2]];
+}
+
+function readGl(engine, x, y) {
+  const dpr = engine.dpr;
+  const g = engine.gpu.gl;
+  const buf = new Uint8Array(4);
+  g.readPixels(
+    Math.round(x * dpr),
+    Math.round((engine.canvas.clientHeight - 1 - y) * dpr),
+    1, 1, g.RGBA, g.UNSIGNED_BYTE, buf,
+  );
+  return [buf[0], buf[1], buf[2]];
+}
+
+function near(a, b, tol = 3) {
+  return Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol && Math.abs(a[2] - b[2]) <= tol;
+}
+
+async function compareAt(engine2, engine3, name, world, tol = 3) {
+  const [sx, sy] = screenOf(engine2.view, world.x, world.y);
+  const a = read2d(engine2, sx, sy);
+  const b = readGl(engine3, sx, sy);
+  check(near(a, b, tol), name, `2D=${a.join(',')} GPU=${b.join(',')} @${sx.toFixed(1)},${sy.toFixed(1)}`);
+}
+
+try {
+  const s2 = makeStack();
+  const s3 = makeStack();
+  const e2 = new Engine(c2d, 400, 300);
+  e2.layers = s2;
+  e2.resize();
+  setView(e2, 1, 20, 10);
+  const e3 = new Engine(c2dx, 400, 300, gl);
+  e3.layers = s3;
+  e3.resize();
+  setView(e3, 1, 20, 10);
+  e3.scheduleDocSync = () => {};
+
+  check(e3.gpuActive(), '简单图层栈启用 GPU 路径', e3.gpu && e3.gpu.error);
+  e2.render();
+  e3.render();
+  await new Promise(r => requestAnimationFrame(r));
+
+  log('GPU 合成测试：1:1 视图');
+  await compareAt(e2, e3, '白纸像素一致', { x: 330, y: 30 });
+  await compareAt(e2, e3, '红色块像素一致', { x: 40, y: 40 });
+  await compareAt(e2, e3, '蓝色块像素一致', { x: 240, y: 120 });
+  await compareAt(e2, e3, '50% 半透明图层合成一致', { x: 150, y: 100 });
+  await compareAt(e2, e3, '文档外工作区一致', { x: -8, y: -4 }, 4);
+
+  log('GPU 合成测试：1.5× 缩放 + 15° 旋转');
+  for (const e of [e2, e3]) setView(e, 1.5, -40, -30, Math.PI / 12);
+  e2.render();
+  e3.render();
+  await new Promise(r => requestAnimationFrame(r));
+  await compareAt(e2, e3, '缩放/旋转后红块一致', { x: 40, y: 40 }, 4);
+  await compareAt(e2, e3, '缩放/旋转后蓝块一致', { x: 240, y: 120 }, 4);
+  await compareAt(e2, e3, '缩放/旋转后半透明合成一致', { x: 150, y: 100 }, 4);
+
+  log('回退条件');
+  const s4 = makeStack();
+  const l = s4.layers[1];
+  const m = s4.addMask(l.id);
+  const e4 = new Engine(c2dx, 400, 300, gl);
+  e4.layers = s4;
+  e4.resize();
+  setView(e4, 1, 20, 10);
+  check(!e4.gpuActive(), '含蒙版图层回退 Canvas2D');
+  e4.render();
+  check(true, '回退渲染不抛异常');
+
+  const s5 = makeStack();
+  const g = s5.addGroup();
+  const e5 = new Engine(c2dx, 400, 300, gl);
+  e5.layers = s5;
+  e5.resize();
+  check(!e5.gpuActive(), '含图层组回退 Canvas2D');
+
+  const s6 = makeStack();
+  s6.setBlend('multiply');
+  const e6 = new Engine(c2dx, 400, 300, gl);
+  e6.layers = s6;
+  check(!e6.gpuActive(), '非正常混合模式回退 Canvas2D');
+
+  log('瓦片修订号');
+  const before = e3.texRevProbe = [...s3.layers[1].surface.tiles.values()][0]?.rev || 0;
+  block(s3.layers[1].surface, '#ffffff', 30, 30, 4, 4);
+  const after = [...s3.layers[1].surface.tiles.values()][0]?.rev || 0;
+  check(after > before, '绘制后瓦片 rev 递增');
+} catch (err) {
+  out.push('💥 异常：' + (err && err.stack ? err.stack : err));
+  fail++;
+}
+
+document.title = fail === 0 ? 'PASS' : 'FAIL';
+document.getElementById('out').textContent = `GPU 合成测试：${pass} 通过 / ${fail} 失败\n\n` + out.join('\n');
+</script>
+</body>
+</html>

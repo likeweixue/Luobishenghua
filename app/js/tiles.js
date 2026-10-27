@@ -101,7 +101,7 @@ export class TileSurface {
         ctx.fillStyle = this.blank;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
-      t = { canvas, ctx, tx, ty };
+      t = { canvas, ctx, tx, ty, rev: 0 };
       this.tiles.set(k, t);
       this._bbox = null;
     }
@@ -147,6 +147,7 @@ export class TileSurface {
         t.ctx.save();
         t.ctx.translate(-r.x, -r.y);
         try { fn(t.ctx, r); } finally { t.ctx.restore(); }
+        t.rev = (t.rev || 0) + 1;
       }
     }
   }
@@ -226,7 +227,10 @@ export class TileSurface {
         const r = this.tileRect(tx, ty);
         const covers = x <= r.x && y <= r.y && x + w >= r.x + r.w && y + h >= r.y + r.h;
         if (covers) this.tiles.delete(k);
-        else t.ctx.clearRect(x - r.x, y - r.y, w, h);
+        else {
+          t.ctx.clearRect(x - r.x, y - r.y, w, h);
+          t.rev = (t.rev || 0) + 1;
+        }
       }
     }
     this._bbox = null;
@@ -245,6 +249,7 @@ export class TileSurface {
         const t = this.getTile(tx, ty, true);
         t.ctx.fillStyle = color;
         t.ctx.fillRect(0, 0, t.canvas.width, t.canvas.height);
+        t.rev = (t.rev || 0) + 1;
       }
     }
   }
@@ -331,6 +336,7 @@ export class TileSurface {
           // 覆盖语义：先清掉这块（瓦片可能有白底），否则 alpha 会被底图吃掉
           t.ctx.clearRect(0, 0, iw, ih);
           t.ctx.drawImage(canvas, r.x, r.y, iw, ih, 0, 0, iw, ih);
+          t.rev = (t.rev || 0) + 1;
           continue;
         }
 
@@ -358,6 +364,7 @@ export class TileSurface {
         const t = this.getTile(tx, ty, true);
         t.ctx.clearRect(0, 0, iw, ih);
         t.ctx.drawImage(probe, 0, 0);
+        t.rev = (t.rev || 0) + 1;
       }
     }
     this._bbox = null;
@@ -410,6 +417,7 @@ export class TileSurface {
 
         const t = this.getTile(tx, ty, true);
         t.ctx.putImageData(img, ix0 - r.x, iy0 - r.y);
+        t.rev = (t.rev || 0) + 1;
       }
     }
     this._bbox = null;
@@ -465,6 +473,7 @@ export class TileSurface {
 
         const t = this.getTile(tx, ty, true);
         t.ctx.putImageData(img, 0, 0);
+        t.rev = (t.rev || 0) + 1;
       }
     }
     this._bbox = null;
@@ -501,6 +510,7 @@ export class TileSurface {
       const t = this.getTile(s.tx, s.ty, true);
       if (!t) continue;
       t.ctx.putImageData(s.data, 0, 0);
+      t.rev = (t.rev || 0) + 1;
     }
     this._bbox = null;
   }

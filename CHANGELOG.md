@@ -2,6 +2,39 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta13（2026-10-28）
+
+WebGL2 合成第一阶段：简单平铺图层上 GPU，复杂结构自动回退 Canvas2D。
+
+GPU：
+- 新增 `app/js/gpu.js`：WebGL2 瓦片合成器，支持普通图层 + 正常混合 + 图层不透明度；
+  文档阴影 / 透明棋盘格 / 视图旋转都在 GPU 完成
+- `TileSurface` 增加每瓦片 `rev`，GPU 只对改动过的瓦片重传纹理；笔画、撤销、
+  PSD 导入、填充、剪贴板粘贴等所有写路径都会递增
+- 平移 / 缩放 / 旋转只做一次 GPU 绘制，不再每帧 `drawImage` 整张文档
+- 回退条件：图层组、蒙版、剪贴、非 `source-over` 混合、瓦片数 > 800 或
+  像素 > 200 MB，自动走原 Canvas2D；WebGL2 不可用 / 上下文丢失同样回退
+- 状态栏显示 `GPU` / `CPU`；「视图 → GPU 合成（实验）」可开关并持久化
+- `engine.doc` 仍在空闲时用 Canvas2D 合成（导航器 / 吸管 / 测试），避免每帧 CPU 全量；
+  上下文丢失、复杂图层切换都验证过回退
+- 基准（M2，4000² / 20 层稀疏 / 144 MB）：整屏合成 18.5 ms → 0.2 ms，
+  视图重绘 19.0 ms → 0.3 ms；50 层稀疏（732 瓦片 / 177 MB）也在 GPU 阈值内
+
+修复：
+- 菜单项 `action: 'saveProject'` 这类字符串动作之前没有解析，导致「文件 / 编辑 /
+  视图」菜单点不动；现在在 `initMenuBar` 统一解析
+- macOS 覆盖式标题栏：首页顶栏加 `data-tauri-drag-region="deep"`，并给红绿灯留位；
+  去掉与 Tauri 内建双击最大化冲突的自定义 handler
+- CI 安装包改为干净文件名：`luobishenghua-<ref>-macos.dmg` /
+  `...-macos.app.zip` / `...-windows.exe`，不再出现 `_0.1.0_aarch64.dmg`
+- 修复 GPU 页面边缘与阴影之间的 1px 接缝
+
+测试：
+- 新增 `test-gpu.html` 14 项：1:1 / 缩放 / 旋转下与 Canvas2D 逐点比对，
+  半透明合成、蒙版 / 组 / 混合回退、瓦片 rev
+- 原有引擎 10、n1 28、n2 51、n3 30、n5 41、tiles 46 全部通过
+- 新增 `bench-gpu.html` 对照基准
+
 ## beta12（2026-10-27）
 
 Photoshop 风格工作台重构。绘画引擎、图层/撤销/PSD 逻辑保持不变，本版只改界面与交互。

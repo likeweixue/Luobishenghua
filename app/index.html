@@ -79,7 +79,7 @@
     <nav class="menus" id="menu-items"></nav>
     <div class="menubar-fill" data-tauri-drag-region></div>
     <div class="menubar-right">
-      <span class="beta-tag">beta12</span>
+      <span class="beta-tag">beta13</span>
       <button class="mb-icon" id="btn-home" title="首页 / 最近文件" data-tip="首页">
         <svg class="ic"><use href="#i-home"/></svg>
       </button>
@@ -263,6 +263,7 @@
         <canvas id="ruler-h"></canvas>
         <canvas id="ruler-v"></canvas>
         <div id="stage">
+          <canvas id="glcanvas"></canvas>
           <canvas id="canvas"></canvas>
         </div>
       </div>
@@ -477,6 +478,8 @@
     <span class="sb-sep"></span>
     <span id="status-memory" title="像素存储：瓦片数 · 占用内存"></span>
     <span class="sb-sep"></span>
+    <span id="status-gpu" class="status-gpu" title="合成后端">CPU</span>
+    <span class="sb-sep"></span>
     <span id="status-brush"></span>
     <span class="sb-fill"></span>
     <span id="status-pressure">压感 —</span>
@@ -485,13 +488,13 @@
     <span class="sb-sep"></span>
     <span id="status-autosave">未修改</span>
     <span class="sb-sep"></span>
-    <span class="sb-version">beta12</span>
+    <span class="sb-version">beta13</span>
   </footer>
 </div>
 
 <!-- ===== 首页 / 欢迎页 ===== -->
 <div id="home" class="hidden">
-  <div class="home-top">
+  <div class="home-top" data-tauri-drag-region="deep">
     <div class="home-logo">笔</div>
     <div class="home-brand">
       <h1>落笔生花</h1>
@@ -544,7 +547,7 @@
   </div>
 
   <div class="home-foot">
-    <span>落笔生花 Luobishenghua · beta12</span>
+    <span>落笔生花 Luobishenghua · beta13</span>
     <span>WorkBuddy × likeweixue</span>
   </div>
 </div>

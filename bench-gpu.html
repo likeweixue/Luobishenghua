@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>GPU BENCH</title>
+<style>body{background:#1b1b1d;color:#ddd;font:12px/1.6 -apple-system,monospace;padding:16px}
+pre{white-space:pre-wrap} canvas{position:absolute;left:-20000px;top:0}</style></head>
+<body>
+<canvas id="cv2d" width="1440" height="900"></canvas>
+<canvas id="cv2dx" width="1440" height="900"></canvas>
+<canvas id="gl" width="1440" height="900"></canvas>
+<pre id="out">running…</pre>
+<script type="module">
+import { Engine } from './app/js/engine.js';
+import { LayerStack } from './app/js/layers.js';
+
+const out = [];
+const log = (s) => { out.push(s); document.getElementById('out').textContent = out.join('\n'); };
+const fmt = (n) => n.toFixed(2);
+
+const W = 1440, H = 900;
+for (const c of [cv2d, cv2dx, gl]) { c.style.width = W + 'px'; c.style.height = H + 'px'; }
+
+function block(nd, color, x, y, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const cc = c.getContext('2d');
+  cc.fillStyle = color;
+  cc.fillRect(0, 0, w, h);
+  nd.surface.putCanvas(c, x, y);
+}
+
+function makeStack(w, h, layers, sparse, withPaper = true) {
+  const s = new LayerStack(w, h);
+  if (withPaper) {
+    const paper = s._create('纸张');
+    paper.locked = true;
+    paper.surface.fill('#ffffff');
+    s.layers.push(paper);
+  }
+  for (let i = 0; i < layers; i++) {
+    const l = s._create('L' + (i + 1));
+    s.layers.push(l);
+    const color = `hsl(${(i * 47) % 360},60%,45%)`;
+    if (sparse) {
+      block(l, color, 100 + (i * 173) % (w - 600), 100 + (i * 211) % (h - 400), 360, 220);
+    } else {
+      // 整层铺色
+      for (let ty = 0; ty < l.surface.rows; ty++) {
+        for (let tx = 0; tx < l.surface.cols; tx++) {
+          const t = l.surface.getTile(tx, ty, true);
+          t.ctx.fillStyle = color;
+          t.ctx.globalAlpha = 0.12;
+          t.ctx.fillRect(0, 0, t.canvas.width, t.canvas.height);
+          t.ctx.globalAlpha = 1;
+          t.rev = (t.rev || 0) + 1;
+        }
+      }
+    }
+  }
+  s.activeId = s.layers[s.layers.length - 1]?.id || null;
+  return s;
+}
+
+function setFit(engine, w, h) {
+  const s = Math.min(W / w, H / h) * 0.85;
+  engine.view.scale = s;
+  engine.view.rotation = 0;
+  engine.view.tx = (W - w * s) / 2;
+  engine.view.ty = (H - h * s) / 2;
+  engine._paperDirty = true;
+}
+
+function time(fn, n = 5) {
+  fn();
+  const t = [];
+  for (let i = 0; i < n; i++) {
+    const t0 = performance.now();
+    fn();
+    t.push(performance.now() - t0);
+  }
+  t.sort((a, b) => a - b);
+  return {
+    avg: t.reduce((a, b) => a + b, 0) / t.length,
+    median: t[Math.floor(t.length / 2)],
+    p95: t[Math.floor(t.length * 0.95) - 1] ?? t[t.length - 1],
+  };
+}
+
+function runScenario(name, w, h, nLayers, sparse) {
+  const s2 = makeStack(w, h, nLayers, sparse);
+  const s3 = makeStack(w, h, nLayers, sparse);
+  const e2 = new Engine(cv2d, w, h);
+  e2.layers = s2;
+  e2.resize();
+  setFit(e2, w, h);
+  const e3 = new Engine(cv2dx, w, h, gl);
+  e3.layers = s3;
+  e3.resize();
+  setFit(e3, w, h);
+  // 隔离文档空闲合成计时
+  e3.scheduleDocSync = () => {};
+
+  const flush2d = () => { e2.ctx.getImageData(0, 0, 1, 1); };
+  const r2 = time(() => { e2.render(); flush2d(); });
+  const v2 = time(() => { e2.view.tx += 2; e2._paperDirty = true; e2.renderViewOnly(); flush2d(); }, 8);
+  const gpuOK = e3.gpuActive();
+  let r3 = null, v3 = null;
+  if (gpuOK) {
+    const finish = () => e3.gpu.gl.finish();
+    const renderGpu = () => { e3.render(); finish(); };
+    const viewGpu = () => { e3.view.tx += 2; e3.renderViewOnly(); finish(); };
+    r3 = time(renderGpu);
+    v3 = time(viewGpu, 8);
+  }
+  const tiles = s2.tileCount();
+  const mb = (s2.pixelBytes() / 1024 / 1024).toFixed(0);
+  log(`${name}  ${w}×${h}  ${nLayers}层  ${tiles}瓦片 ${mb}MB  GPU=${gpuOK ? 'on' : 'fallback/' + (e3.gpu && e3.gpu.error || 'cap')}`);
+  log(`  整屏合成 2D ${fmt(r2.median)}ms  GPU ${gpuOK ? fmt(r3.median) + 'ms' : '—'}   视图重绘 2D ${fmt(v2.median)}ms  GPU ${gpuOK ? fmt(v3.median) + 'ms' : '—'}`);
+  e2.layers = null; e3.layers = null;
+  s2.layers.length = 0; s3.layers.length = 0;
+  if (e3.gpu) for (const e of e3.gpu.tex.values()) e3.gpu.gl.deleteTexture(e.tex);
+  if (e3.gpu) e3.gpu.tex.clear();
+}
+
+runScenario('sparse', 1600, 1600, 10, true);
+runScenario('sparse', 4000, 4000, 20, true);
+runScenario('sparse', 4000, 4000, 50, true);
+runScenario('dense', 1600, 1600, 50, false);
+log('说明：整屏合成=图层变化后全量；视图重绘=平移/缩放。GPU 含 gl.finish()，数字偏保守。');
+</script>
+</body>
+</html>

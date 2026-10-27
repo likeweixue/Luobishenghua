@@ -12,6 +12,7 @@ export class Navigator {
     canvas.addEventListener('pointerup', () => { this.dragging = false; });
 
     engine.onRender = () => this.draw();
+    engine.onDocSync = () => this.draw();
   }
 
   // 文档在导航器中的布局（contain）

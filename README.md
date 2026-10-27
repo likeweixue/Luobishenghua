@@ -1,10 +1,10 @@
 # 落笔生花 Luobishenghua
 
-一款面向绘画的桌面软件：瓦片化图层存储、压感笔刷引擎、PSD 分层互通、`.abr` 笔刷导入、原生工程 `.lbsh`。从 **beta12** 起采用 Photoshop 风格工作台。
+一款面向绘画的桌面软件：瓦片化图层存储、压感笔刷引擎、PSD 分层互通、`.abr` 笔刷导入、原生工程 `.lbsh`。从 **beta12** 起采用 Photoshop 风格工作台，**beta13** 加入 WebGL2 合成。
 
 ![落笔生花工作台](docs/screenshot.png)
 
-> 当前版本：**beta12** · 平台：macOS / Windows（Tauri 2）
+> 当前版本：**beta13** · 平台：macOS / Windows（Tauri 2）
 >
 > 技术栈：HTML + CSS + JavaScript（无框架）+ Canvas 2D + Tauri 2（Rust 壳）
 >
@@ -21,10 +21,11 @@
 - **选区 / 变换**：矩形、椭圆、套索、多边形套索，羽化、反选、自由变换、复制粘贴
 - **文件**：PSD 分层读写、PNG 导出、`.lbsh` 工程、自动保存、崩溃恢复、最近文件
 - **工作台**（beta12）：PS 式工具栏 / 选项栏 / 文档标签 / 标尺 / 面板坞 / 状态栏，可折叠与调整面板，浮动画笔面板，PS 风格拾色器
+- **GPU 合成**（beta13）：WebGL2 平铺图层渲染，平移 / 缩放 / 旋转不再每帧走 Canvas2D；组 / 蒙版 / 剪贴 / 非正常混合 / 超大瓦片自动回退，状态栏与「视图」菜单可见
 
 ## 照片级界面说明
 
-beta12 按 Photoshop 的工作区逻辑重排：
+beta12 按 Photoshop 的工作区逻辑重排；beta13 在此基础上加入 GPU 合成：
 
 - 顶部：菜单栏 + 工具选项栏
 - 左侧：双列工具栏 + 前后景色井
@@ -32,7 +33,15 @@ beta12 按 Photoshop 的工作区逻辑重排：
 - 右侧：颜色 / 色板、图层、历史 / 导航器 三个标签组，可拖动分隔条调高度、拖左边缘调宽度
 - 底部：缩放、文档尺寸、内存、笔刷、压感、颜色、保存状态
 
-面板布局、宽度、高度、标尺开关、色板都会保存在 `localStorage`，可通过「窗口 → 重置工作区」恢复默认。
+面板布局、宽度、高度、标尺开关、色板、GPU 开关都会保存在 `localStorage`，可通过「窗口 → 重置工作区」恢复默认。
+
+### GPU 合成
+
+- 只接管「普通图层 + 正常混合 + 无组 / 无蒙版 / 无剪贴」的简单图层栈；其余情况自动回退 Canvas2D，功能不受影响
+- 瓦片按修订号增量上传纹理，笔画只重传改动的瓦片；平移 / 缩放 / 旋转只做一次 GPU 绘制
+- 瓦片数 > 800 或像素 > 200 MB 时回退，避免 GPU 纹理把内存打爆
+- 状态栏右侧显示 `GPU` / `CPU`；「视图 → GPU 合成（实验）」可手动开关，`localStorage` 记忆
+- 基准（本机 M2，4000² / 20 层稀疏 / 144 MB）：整屏合成 Canvas2D ≈ 18.5 ms → GPU ≈ 0.2 ms；视图重绘 ≈ 19 ms → 0.3 ms。数字受文档、GPU、浏览器影响，仅作参考
 
 ## 开发
 
@@ -57,9 +66,11 @@ npm run tauri dev
 npm run tauri build
 ```
 
-macOS 产物在 `src-tauri/target/release/bundle/macos/`（`.app`）与 `bundle/dmg/`（`.dmg`），Windows 在 `src-tauri/target/release/bundle/nsis/`。CI 发版会附带 `.dmg` 与 `.exe`。
+macOS 产物在 `src-tauri/target/release/bundle/macos/`（`.app`）与 `bundle/dmg/`（`.dmg`），Windows 在 `src-tauri/target/release/bundle/nsis/`。CI 会把它们统一命名为 `luobishenghua-<ref>-macos.dmg` / `.app.zip` / `windows.exe` 后上传和发版。
 
 > 当前安装包未做 Apple 公证 / Windows 代码签名，首次打开可能需要在系统设置中放行。
+
+> GPU 合成要求 WebGL2；不支持的环境自动使用 Canvas2D，不会影响使用。
 
 ## GitHub 打包 / 发版
 
@@ -90,14 +101,17 @@ app/                前端（无构建步骤，直接由 Tauri 加载）
   js/dock.js        面板坞：标签组、折叠、分隔条、浮动面板
   js/colorpicker.js PS 风格拾色器（HSV/RGB/Hex）
   js/rulers.js      标尺
-  js/engine.js      Canvas 2D 视图 / 合成引擎
+  js/engine.js      Canvas 2D / WebGL2 视图与合成引擎
+  js/gpu.js         WebGL2 瓦片合成器（简单图层栈）
   js/tiles.js       256×256 瓦片图层存储
   js/layers.js      图层树 / 组 / 蒙版 / 剪贴
   js/psd.js         PSD 读写
   js/abr.js         .abr 解析
   js/brushes.js     笔刷印章与压感模型
 src-tauri/          Tauri 2 壳（窗口、原生文件对话框、打包配置）
-test-*.html         浏览器端引擎 / 图层 / PSD 测试页
+test-*.html         浏览器端引擎 / 图层 / PSD / GPU 测试页（test-gpu.html 14 项）
+bench.html          Canvas2D 基准
+bench-gpu.html      GPU vs Canvas2D 基准
 docs/               文档与截图
 ```
 
@@ -108,6 +122,8 @@ docs/               文档与截图
 - 单一文档窗口；无多文档标签、无液化 / 滤镜
 - 面板目前是固定三组 + 浮动画笔；尚未实现任意拖拽重组（PS 的 group / dock 全行为）
 - 测试以浏览器测试页 + 无头 Chrome 冒烟为主，尚未接入自动化 CI 测试
+- GPU 目前只支持简单平铺图层；组 / 蒙版 / 剪贴 / 混合模式的 GPU 版本是下一阶段
+- 文档空闲时仍会用 Canvas2D 合成一份 `engine.doc` 供导航器 / 吸管使用，复杂文档会有一次短暂空闲开销
 
 技术栈评估与演进建议见 [docs/TECH_STACK.md](docs/TECH_STACK.md)。
 

@@ -20,6 +20,7 @@ import { floodFill, drawGradient, Smudge, pickColor } from './paint.js';
 const settings = Object.assign(
   {
     undoLimit: 50, defaultWidth: 1600, defaultHeight: 1600, autosaveSec: 60,
+    gpu: true,               // WebGL2 合成（结构不支持时自动回退）
     dynamics: null,          // 压感曲线 + 倾斜 / 间距 / 散布
   },
   JSON.parse(localStorage.getItem('lbsh-settings') || '{}')
@@ -41,9 +42,11 @@ if (window.__TAURI__ || window.__TAURI_INTERNALS__) {
 
 const canvas = document.getElementById('canvas');
 const stage = document.getElementById('stage');
-const engine = new Engine(canvas, 1600, 1600);
+const engine = new Engine(canvas, 1600, 1600, document.getElementById('glcanvas'));
 const layers = new LayerStack(1600, 1600);
 engine.layers = layers;
+engine.gpuEnabled = settings.gpu !== false;
+engine.onGpuChange = () => updateStatus();
 const history = new History(engine, layers, settings.undoLimit);
 const dock = new Dock(document.getElementById('dock-root'), stage);
 const navigatorPanel = new Navigator(document.getElementById('navigator'), engine, stage);
@@ -822,6 +825,7 @@ blendSelect.addEventListener('change', () => {
   history.pushFull('混合模式');
   layers.setBlend(blendSelect.value);
   engine.render();
+  updateStatus();
 });
 layerOpacityInput.addEventListener('pointerdown', () => history.pushFull('图层不透明度'));
 layerOpacityInput.addEventListener('input', () => {
@@ -1090,6 +1094,17 @@ function updateStatus() {
   document.getElementById('btn-undo').disabled = !history.canUndo;
   document.getElementById('btn-redo').disabled = !history.canRedo;
   document.getElementById('zoom-label').textContent = Math.round(engine.view.scale * 100) + '%';
+  const gpuEl = document.getElementById('status-gpu');
+  if (gpuEl) {
+    const active = engine.gpuActive();
+    gpuEl.textContent = active ? 'GPU' : 'CPU';
+    gpuEl.classList.toggle('on', active);
+    gpuEl.title = active
+      ? ('WebGL2 合成' + (engine.gpu && engine.gpu.lastInfo ? ' · ' + engine.gpu.lastInfo : ''))
+      : (engine.gpu && engine.gpu.ok && engine.gpuEnabled
+        ? '当前图层结构（组 / 蒙版 / 剪贴 / 混合模式或瓦片过多）已回退 Canvas2D'
+        : (engine.gpu && !engine.gpu.ok ? '当前环境不支持 WebGL2，使用 Canvas2D' : 'Canvas2D 合成'));
+  }
   updateDocTab();
 }
 
@@ -1122,15 +1137,6 @@ function clearActiveLayer() {
 /* ---------------- 文件保存桥（Tauri 桌面 / Web 回退） ---------------- */
 
 const TAURI = window.__TAURI__ || null;
-
-// 覆盖式标题栏：双击空白标题区域最大化 / 还原（macOS 习惯）
-if (TAURI && TAURI.window && /Mac/i.test(navigator.platform || navigator.userAgent)) {
-  const bar = document.getElementById('menubar');
-  bar.addEventListener('dblclick', (e) => {
-    if (e.target.closest('.menu-item, .menubar-right, .menus, .app-badge')) return;
-    try { TAURI.window.getCurrentWindow().toggleMaximize(); } catch { /* ignore */ }
-  });
-}
 
 async function saveBytes(bytes, defaultName, filterName, exts) {
   if (TAURI && TAURI.dialog && TAURI.fs) {
@@ -1393,6 +1399,24 @@ function resetSwatches() {
   renderSwatches();
 }
 
+function gpuAvailable() {
+  return !!(engine.gpu && engine.gpu.ok);
+}
+function gpuOn() {
+  return !!(engine.gpuEnabled && gpuAvailable());
+}
+function toggleGpu() {
+  if (!gpuAvailable()) {
+    toast('当前环境不支持 WebGL2，继续使用 Canvas2D');
+    return;
+  }
+  settings.gpu = !gpuOn();
+  saveSettings();
+  engine.setGpuEnabled(settings.gpu);
+  updateStatus();
+  toast(settings.gpu ? 'GPU 合成已开启' : 'GPU 合成已关闭，使用 Canvas2D');
+}
+
 function openPreferences() {
   settingsDialog(settings, (s) => {
     Object.assign(settings, s);
@@ -1511,6 +1535,9 @@ initMenuBar({
   rotateRight: () => { engine.rotateBy(Math.PI / 12); updateStatus(); },
   toggleRulers: () => rulers.toggle(),
   rulersOn: () => rulers.enabled,
+  toggleGpu,
+  gpuOn,
+  gpuAvailable,
   toggleToolbar,
   toolbarVisible,
   togglePanels,
@@ -1892,6 +1919,7 @@ function pickAt(e) {
     const l = layers.active;
     if (l && l.type === 'layer') hex = l.surface.colorAt(p.x, p.y);
   } else {
+    if (engine.gpuActive()) engine.syncDocNow();
     hex = pickColor(engine.doc, p.x, p.y);
   }
   if (!hex) return false;
