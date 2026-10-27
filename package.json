@@ -6,8 +6,9 @@
   "type": "module",
   "scripts": {
     "tauri": "tauri",
-    "build": "tauri build",
-    "dev": "tauri dev"
+    "dev": "tauri dev",
+    "dev:web": "node scripts/serve.mjs",
+    "build": "tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

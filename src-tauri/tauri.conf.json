@@ -5,7 +5,8 @@
   "identifier": "cn.luobishenghua.paint",
   "build": {
     "frontendDist": "../app",
-    "devUrl": "http://localhost:8619/app/"
+    "devUrl": "http://localhost:8619/app/",
+    "beforeDevCommand": "node scripts/serve.mjs"
   },
   "app": {
     "withGlobalTauri": true,
@@ -17,7 +18,15 @@
         "minWidth": 1024,
         "minHeight": 700,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "theme": "Dark",
+        "backgroundColor": "#1e1e1e",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 12,
+          "y": 9
+        }
       }
     ],
     "security": {
@@ -26,7 +35,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": "all",
     "category": "Graphics and Design",
     "shortDescription": "落笔生花 - 专业绘画软件",
     "longDescription": "落笔生花 Luobishenghua：对标 CSP 的专业绘画软件，支持 PSD 分层读写与 PS 笔刷导入。",

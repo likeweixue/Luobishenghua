@@ -3,23 +3,112 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
 <title>落笔生花 Luobishenghua</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232f6fa8'/%3E%3Ctext x='32' y='44' font-size='36' text-anchor='middle' fill='white' font-family='PingFang SC,sans-serif'%3E%E7%AC%94%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <!-- 菜单栏（PS 风格） -->
-  <nav id="menubar"></nav>
+<svg id="i-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <defs>
+    <linearGradient id="i-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="currentColor" stop-opacity="0.08"/>
+      <stop offset="0.55" stop-color="currentColor" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="currentColor" stop-opacity="1"/>
+    </linearGradient>
+  </defs>
+  <symbol id="i-move" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M9.6 5.4 12 3l2.4 2.4M9.6 18.6 12 21l2.4-2.4M5.4 9.6 3 12l2.4 2.4M18.6 9.6 21 12l-2.4 2.4"/></symbol>
+  <symbol id="i-marquee" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" stroke-dasharray="2.6 2.4"/><path d="M3.5 7V3.5H7M17 3.5h3.5V7M20.5 17v3.5H17M7 20.5H3.5V17" stroke-width="2"/></symbol>
+  <symbol id="i-ellipse" viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8.6" ry="7.2" stroke-dasharray="2.6 2.4"/></symbol>
+  <symbol id="i-lasso" viewBox="0 0 24 24"><path d="M20 11c0 3.6-3.9 6.5-8.7 6.5S2.6 14.6 2.6 11 6.5 4.5 11.3 4.5 20 7.4 20 11Z"/><path d="M7.1 16.6c-1.3 1.5-.8 3.4.8 4 1.2.5 2.5 0 3-1.2"/></symbol>
+  <symbol id="i-poly" viewBox="0 0 24 24"><path d="M4 17.5 7.3 4.8l9.4 1.6-2 9.5-6.6 3.3-4.1-1.7Z"/><circle cx="4" cy="17.5" r="1.4" fill="currentColor" stroke="none"/><circle cx="7.3" cy="4.8" r="1.4" fill="currentColor" stroke="none"/><circle cx="16.7" cy="6.4" r="1.4" fill="currentColor" stroke="none"/><circle cx="14.7" cy="15.9" r="1.4" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-brush" viewBox="0 0 24 24"><path d="M14.2 3.6a2.1 2.1 0 0 1 3 0l3.2 3.2a2.1 2.1 0 0 1 0 3l-8.1 8.1-6.2-6.2 8.1-8.1Z"/><path d="M6.1 11.7 3.4 14.4c-1.1 1.1-1.1 2.9 0 4s2.9 1.1 4 0l2.7-2.7"/><path d="m10.7 9.3 4.1 4.1"/></symbol>
+  <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M4.2 15.1 12.8 6.5l5.1 5.1-7.6 7.6H6.2l-2-2a1.4 1.4 0 0 1 0-2.1Z"/><path d="M10.2 13.2 15 18M9.8 19.2h10"/></symbol>
+  <symbol id="i-smudge" viewBox="0 0 24 24"><path d="M12.4 3.2c2.6 3.1 4.6 6.3 4.6 9.1a4.9 4.9 0 0 1-9.8 0c0-2.5 1.6-5.1 3.3-7.2"/><path d="M5.2 20.3c2.2.7 4.4.8 6.6.4M18.8 20.3c-1.2.4-2.5.6-3.8.5" opacity=".65"/></symbol>
+  <symbol id="i-bucket" viewBox="0 0 24 24"><path d="M9.2 4.6 4.3 9.5c-.8.8-.8 2 0 2.8l3.2 3.2c.8.8 2 .8 2.8 0l4.9-4.9"/><path d="m14.3 7.1 2.6 2.6M19.2 15.2s1.9 2.3 1.9 3.4a1.9 1.9 0 0 1-3.8 0c0-1.1 1.9-3.4 1.9-3.4Z" fill="currentColor" stroke="none"/><path d="M7.5 5.8 9 4.3"/></symbol>
+  <symbol id="i-gradient" viewBox="0 0 24 24"><rect x="3.2" y="4.2" width="17.6" height="15.6" rx="1.5"/><rect x="4.7" y="5.7" width="14.6" height="12.6" fill="url(#i-grad)" stroke="none"/></symbol>
+  <symbol id="i-eyedropper" viewBox="0 0 24 24"><path d="M4.2 19.8 4.9 16l8.2-8.2 3.1 3.1L8 19.1l-3.8.7Z"/><path d="m14.9 4.3 1.4-1.4a2.2 2.2 0 0 1 3.1 0l1.7 1.7a2.2 2.2 0 0 1 0 3.1l-1.4 1.4-4.8-4.8Z"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8.2 12.2V6.4a1.5 1.5 0 0 1 3 0v4.4"/><path d="M11.2 10.8V4.7a1.5 1.5 0 0 1 3 0v6.1"/><path d="M14.2 10.8V6.2a1.5 1.5 0 0 1 3 0v8.2c0 4.1-2.4 6.4-6 6.4-2.9 0-4.8-1.4-5.9-3.8l-1.8-4a1.5 1.5 0 0 1 2.5-1.6l1.2 1.4"/></symbol>
+  <symbol id="i-zoom" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.4 15.4 5.1 5.1M10.5 7.5v6M7.5 10.5h6"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.3 12S6.3 5.8 12 5.8 21.7 12 21.7 12 17.7 18.2 12 18.2 2.3 12 2.3 12Z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M2.3 12S6.3 5.8 12 5.8 21.7 12 21.7 12 17.7 18.2 12 18.2 2.3 12 2.3 12Z" opacity=".45"/><path d="M4.5 4.5 19.5 19.5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="1.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></symbol>
+  <symbol id="i-alpha" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.4"/><text x="12" y="15.9" text-anchor="middle" font-size="10.5" font-family="Georgia, 'Times New Roman', serif" fill="currentColor" stroke="none">α</text></symbol>
+  <symbol id="i-mask" viewBox="0 0 24 24"><rect x="3.4" y="4.4" width="17.2" height="15.2" rx="1.4"/><circle cx="12" cy="12" r="4.3" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="M7.5 4.5v10a1.5 1.5 0 0 0 1.5 1.5h10"/><path d="m14.8 11 4.2 4-4.2 4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.2 6.8a1.5 1.5 0 0 1 1.5-1.5h5l2 2.2h7.6a1.5 1.5 0 0 1 1.5 1.5v8.8a1.5 1.5 0 0 1-1.5 1.5H4.7a1.5 1.5 0 0 1-1.5-1.5V6.8Z"/></symbol>
+  <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3.2 6.8a1.5 1.5 0 0 1 1.5-1.5h5l2 2.2h7.6a1.5 1.5 0 0 1 1.5 1.5v8.8a1.5 1.5 0 0 1-1.5 1.5H4.7a1.5 1.5 0 0 1-1.5-1.5V6.8Z"/><path d="M12 11v5M9.5 13.5h5"/></symbol>
+  <symbol id="i-layer-stack" viewBox="0 0 24 24"><path d="m12 3.2 8.8 4.9L12 13 3.2 8.1 12 3.2Z"/><path d="m3.2 12.2 8.8 4.9 8.8-4.9"/><path d="m3.2 16.2 8.8 4.9 8.8-4.9"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 4.5v15M4.5 12h15"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M4.5 12h15"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m5.5 5.5 13 13M18.5 5.5l-13 13"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m4.5 12.5 5 5 10-11"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 6.5h15M9.5 6.5V4.2h5v2.3M6.6 6.5l.9 13a1.5 1.5 0 0 0 1.5 1.4h6a1.5 1.5 0 0 0 1.5-1.4l.9-13"/><path d="M10 10.5v6.5M14 10.5v6.5"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19.5v-15M12 4.5l-5 5M12 4.5l5 5"/></symbol>
+  <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 4.5v15M12 19.5l-5-5M12 19.5l5-5"/></symbol>
+  <symbol id="i-merge" viewBox="0 0 24 24"><path d="M12 3.5v10M12 13.5l-4-4M12 13.5l4-4M3.5 20.5h17"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="m8.6 5.4-4.2 4.2 4.2 4.2"/><path d="M4.4 9.6h9.1a5.7 5.7 0 1 1 0 11.4h-2.3"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15.4 5.4 4.2 4.2-4.2 4.2"/><path d="M19.6 9.6h-9.1a5.7 5.7 0 1 0 0 11.4h2.3"/></symbol>
+  <symbol id="i-rotate-ccw" viewBox="0 0 24 24"><path d="M3.8 8.9a8.4 8.4 0 1 1-1.1 6.2"/><path d="M3.4 3.9v5.2h5.2"/></symbol>
+  <symbol id="i-rotate-cw" viewBox="0 0 24 24"><path d="M20.2 8.9a8.4 8.4 0 1 0 1.1 6.2"/><path d="M20.6 3.9v5.2h-5.2"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="m3.6 10.6 8.4-7 8.4 7"/><path d="M5.6 9.4v10h12.8v-10"/><path d="M9.6 19.4v-5.2h4.8v5.2"/></symbol>
+  <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 18.5V6.7h6l2 2h9v3"/><path d="M3.6 18.5h15.7l2.2-7.4H6L3.6 18.5Z"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3.8h11l3 3v13.4H5z"/><path d="M8.2 3.8v5h7v-5"/><path d="M8 13h8v7.2H8z"/></symbol>
+  <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V3.8M12 3.8 7.5 8.3M12 3.8l4.5 4.5"/><path d="M4.5 13.5v5.7h15v-5.7"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="1.5"/><circle cx="8.6" cy="9.2" r="1.6"/><path d="m4.5 17.5 4.6-4.8 3.2 3.1 3.3-3.4 4.9 5.1"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.6v2.4M12 19v2.4M21.4 12H19M5 12H2.6M18.7 5.3l-1.7 1.7M7 17l-1.7 1.7M18.7 18.7 17 17M7 7 5.3 5.3"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h8.5M17 7h3M4 17h3M11.5 17H20"/><circle cx="14.8" cy="7" r="2.2"/><circle cx="9.2" cy="17" r="2.2"/></symbol>
+  <symbol id="i-hamburger" viewBox="0 0 24 24"><path d="M4 6.5h16M4 12h16M4 17.5h16"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8.5h12M16 8.5l-3.5-3.5M16 8.5l-3.5 3.5"/><path d="M20 15.5H8M8 15.5l3.5-3.5M8 15.5l3.5 3.5"/></symbol>
+  <symbol id="i-default-colors" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="11" height="11" fill="currentColor" stroke="none"/><rect x="9" y="9" width="11.5" height="11.5" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></symbol>
+  <symbol id="i-chevron-up" viewBox="0 0 24 24"><path d="m6.5 14.5 5.5-5.5 5.5 5.5"/></symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9.5 6.5 5.5 5.5-5.5 5.5"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M9.6 9.4a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2-2.4 3.6"/><circle cx="12" cy="17.2" r=".9" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="m4.5 19.5.8-4.3L16.6 4a2 2 0 0 1 2.9 0l.5.5a2 2 0 0 1 0 2.9L8.8 18.7l-4.3.8Z"/><path d="m14.8 5.8 3.4 3.4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.2"/><path d="m15.2 15.2 5 5"/></symbol>
+  <symbol id="i-panels" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M15.5 4.5v15M8.5 4.5v15" opacity=".55"/></symbol>
+</svg>
 
-  <!-- 属性栏（PS 的「工具选项栏」）：随当前工具显示参数 -->
+<div id="app">
+  <!-- ===== 菜单栏 / 标题栏 ===== -->
+  <header id="menubar" data-tauri-drag-region>
+    <div class="app-badge" data-tauri-drag-region>笔</div>
+    <nav class="menus" id="menu-items"></nav>
+    <div class="menubar-fill" data-tauri-drag-region></div>
+    <div class="menubar-right">
+      <span class="beta-tag">beta12</span>
+      <button class="mb-icon" id="btn-home" title="首页 / 最近文件" data-tip="首页">
+        <svg class="ic"><use href="#i-home"/></svg>
+      </button>
+      <button class="mb-icon" id="btn-settings" title="偏好设置" data-tip="偏好设置">
+        <svg class="ic"><use href="#i-gear"/></svg>
+      </button>
+      <button class="mb-icon" id="btn-shortcuts" title="快捷键一览" data-tip="快捷键">
+        <svg class="ic"><use href="#i-help"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ===== 工具选项栏 ===== -->
   <header id="optionsbar">
     <div class="opt-tool">
-      <i id="opt-tool-icon">✏</i>
+      <svg class="ic" id="opt-tool-icon"><use id="opt-tool-use" href="#i-brush"/></svg>
       <span id="opt-tool-name">画笔</span>
     </div>
     <span class="opt-sep"></span>
 
     <div class="opt-group" id="opt-brush-group">
-      <label class="opt">粗细
+      <button id="btn-brush-preset" class="brush-pop" title="画笔预设">
+        <canvas id="brush-preview" width="30" height="30"></canvas>
+        <span class="caret"></span>
+      </button>
+      <button id="btn-brush-settings" class="opt-icon" title="画笔设置" data-tip="画笔设置">
+        <svg class="ic"><use href="#i-sliders"/></svg>
+      </button>
+      <label class="opt">大小
         <input type="range" id="brush-size" min="1" max="200" value="24">
         <span class="val" id="brush-size-val">24</span>
       </label>
@@ -69,83 +158,289 @@
     </div>
 
     <div class="opt-group hidden" id="opt-select-group">
-      <button id="btn-sel-all" title="全选 (Cmd+A)">全选</button>
-      <button id="btn-sel-invert" title="反选 (Shift+Cmd+I)">反选</button>
-      <button id="btn-sel-feather" title="羽化选区">羽化</button>
-      <button id="btn-sel-none" title="取消选择 (Cmd+D)">取消选择</button>
+      <button id="btn-sel-all" class="opt-btn" title="全选 (⌘A)">全选</button>
+      <button id="btn-sel-invert" class="opt-btn" title="反选 (⇧⌘I)">反选</button>
+      <button id="btn-sel-feather" class="opt-btn" title="羽化选区">羽化…</button>
+      <button id="btn-sel-none" class="opt-btn" title="取消选择 (⌘D)">取消选择</button>
     </div>
 
     <div class="opt-group hidden" id="opt-transform-group">
-      <button id="btn-tr-flip-h" title="水平翻转">水平翻转</button>
-      <button id="btn-tr-flip-v" title="垂直翻转">垂直翻转</button>
-      <button id="btn-tr-apply" class="primary" title="应用 (Enter)">应用</button>
-      <button id="btn-tr-cancel" title="取消 (Esc)">取消</button>
+      <button id="btn-tr-flip-h" class="opt-btn" title="水平翻转">水平翻转</button>
+      <button id="btn-tr-flip-v" class="opt-btn" title="垂直翻转">垂直翻转</button>
+      <button id="btn-tr-apply" class="opt-btn primary" title="应用 (Enter)">应用</button>
+      <button id="btn-tr-cancel" class="opt-btn" title="取消 (Esc)">取消</button>
     </div>
 
-    <span class="opt-sep"></span>
-    <label class="opt" title="当前前景色">颜色
-      <span id="color-chip"></span>
-    </label>
+    <div class="opt-group hidden" id="opt-zoom-group">
+      <button id="btn-zoom-fit" class="opt-btn" title="适合屏幕 (⌘0)">适合屏幕</button>
+      <button id="btn-zoom-100" class="opt-btn" title="实际像素 (⌘1)">100%</button>
+    </div>
 
     <div class="opt-right">
-      <button id="btn-home" title="返回首页">首页</button>
-      <span class="sep"></span>
-      <button id="btn-undo" title="撤销 (Cmd+Z)">↩</button>
-      <button id="btn-redo" title="重做 (Cmd+Shift+Z)">↪</button>
-      <span class="sep"></span>
-      <button id="btn-rotate-left" title="逆时针旋转 15°">⟲</button>
-      <button id="btn-rotate-right" title="顺时针旋转 15°">⟳</button>
-      <button id="btn-reset-view" title="复位视图 (0)">复位</button>
-      <span id="zoom-label">100%</span>
-      <span class="sep"></span>
-      <button id="btn-open" title="打开 PSD 文件（也可直接拖入窗口）">打开 PSD</button>
-      <button id="btn-save-psd" title="导出为 PSD（分层）">导出 PSD</button>
-      <button id="btn-save" class="primary" title="导出 PNG">导出 PNG</button>
+      <button class="opt-icon" id="btn-undo" title="撤销 (⌘Z)" data-tip="撤销">
+        <svg class="ic"><use href="#i-undo"/></svg>
+      </button>
+      <button class="opt-icon" id="btn-redo" title="重做 (⇧⌘Z)" data-tip="重做">
+        <svg class="ic"><use href="#i-redo"/></svg>
+      </button>
+      <span class="opt-sep"></span>
+      <button class="opt-icon" id="btn-rotate-left" title="逆时针旋转 15°" data-tip="逆时针旋转">
+        <svg class="ic"><use href="#i-rotate-ccw"/></svg>
+      </button>
+      <button class="opt-icon" id="btn-rotate-right" title="顺时针旋转 15°" data-tip="顺时针旋转">
+        <svg class="ic"><use href="#i-rotate-cw"/></svg>
+      </button>
+      <button class="opt-icon" id="btn-reset-view" title="适合屏幕 (⌘0)" data-tip="适合屏幕">
+        <svg class="ic"><use href="#i-fit"/></svg>
+      </button>
+      <span class="opt-sep"></span>
+      <button class="opt-icon" id="btn-open" title="打开 PSD（也可直接拖入窗口）" data-tip="打开 PSD">
+        <svg class="ic"><use href="#i-open"/></svg>
+      </button>
+      <button class="opt-icon" id="btn-save-psd" title="导出为 PSD（分层）" data-tip="导出 PSD">
+        <svg class="ic"><use href="#i-image"/></svg>
+      </button>
+      <button class="opt-icon export" id="btn-save" title="导出 PNG" data-tip="导出 PNG">
+        <svg class="ic"><use href="#i-export"/></svg>
+      </button>
     </div>
     <input type="file" id="file-open" accept=".psd" style="display:none">
     <input type="file" id="file-open-project" accept=".lbsh" style="display:none">
   </header>
 
-  <!-- 工作区：画布 + 可停靠面板 -->
-  <main id="stage">
-    <canvas id="canvas"></canvas>
+  <!-- ===== 主工作区 ===== -->
+  <main id="main">
+    <!-- 左侧工具栏 -->
+    <aside id="toolbar">
+      <div class="tool-list" id="tool-list">
+        <button data-tool="move" title="移动工具 (V)" data-tip="移动工具 · V"><svg class="ic"><use href="#i-move"/></svg></button>
+        <button data-tool="zoom" title="缩放工具 (Z)" data-tip="缩放工具 · Z"><svg class="ic"><use href="#i-zoom"/></svg></button>
+        <button data-tool="rect" title="矩形选框 (M)" data-tip="矩形选框 · M"><svg class="ic"><use href="#i-marquee"/></svg></button>
+        <button data-tool="ellipse" class="flyout" title="椭圆选框 (⇧M)" data-tip="椭圆选框 · ⇧M" data-group="marquee"><svg class="ic"><use href="#i-ellipse"/></svg></button>
+        <button data-tool="lasso" title="套索 (L)" data-tip="套索 · L"><svg class="ic"><use href="#i-lasso"/></svg></button>
+        <button data-tool="poly" class="flyout" title="多边形套索 (⇧L)" data-tip="多边形套索 · ⇧L" data-group="lasso"><svg class="ic"><use href="#i-poly"/></svg></button>
+        <button data-tool="brush" class="active" title="画笔 (B)" data-tip="画笔 · B"><svg class="ic"><use href="#i-brush"/></svg></button>
+        <button data-tool="eraser" class="flyout" title="橡皮擦 (E)" data-tip="橡皮擦 · E" data-group="brush"><svg class="ic"><use href="#i-eraser"/></svg></button>
+        <button data-tool="smudge" class="flyout" title="涂抹 (S)" data-tip="涂抹 · S" data-group="brush"><svg class="ic"><use href="#i-smudge"/></svg></button>
+        <button data-tool="bucket" title="油漆桶 (G)" data-tip="油漆桶 · G"><svg class="ic"><use href="#i-bucket"/></svg></button>
+        <button data-tool="gradient" class="flyout" title="渐变 (⇧G)" data-tip="渐变 · ⇧G" data-group="fill"><svg class="ic"><use href="#i-gradient"/></svg></button>
+        <button data-tool="eyedropper" class="flyout" title="吸管 (I)" data-tip="吸管 · I" data-group="fill"><svg class="ic"><use href="#i-eyedropper"/></svg></button>
+        <button data-tool="hand" title="抓手 (H)" data-tip="抓手 · H"><svg class="ic"><use href="#i-hand"/></svg></button>
+      </div>
+      <div class="toolbar-sep"></div>
+      <div class="color-wells">
+        <button class="well well-bg" id="btn-color-bg" title="背景色">
+          <span id="color-bg-chip"></span>
+        </button>
+        <button class="well well-fg" id="btn-color-fg" title="前景色">
+          <span id="color-chip"></span>
+        </button>
+        <button class="well-ic well-swap" id="btn-swap-colors" title="交换前景/背景色 (X)">
+          <svg class="ic"><use href="#i-swap"/></svg>
+        </button>
+        <button class="well-ic well-default" id="btn-default-colors" title="默认黑白 (D)">
+          <svg class="ic"><use href="#i-default-colors"/></svg>
+        </button>
+      </div>
+    </aside>
 
-    <div id="dock-root">
-
-      <section class="panel" data-panel="tools" data-dock="left">
-        <div class="panel-title"><span class="grip"></span><span class="name">工具</span><button class="panel-collapse" title="折叠">–</button></div>
-        <div class="panel-body">
-          <div class="tool-list" id="tool-list">
-            <button data-tool="brush" class="active"><i>✏</i> 画笔 <kbd>B</kbd></button>
-            <button data-tool="eraser"><i>◻</i> 橡皮 <kbd>E</kbd></button>
-            <button data-tool="smudge"><i>◍</i> 涂抹 <kbd>S</kbd></button>
-            <button data-tool="bucket"><i>▨</i> 油漆桶 <kbd>G</kbd></button>
-            <button data-tool="gradient"><i>▤</i> 渐变 <kbd>⇧G</kbd></button>
-            <button data-tool="eyedropper"><i>⚲</i> 吸管 <kbd>I</kbd></button>
-            <button data-tool="move"><i>✥</i> 移动 <kbd>V</kbd></button>
-            <button data-tool="rect"><i>▭</i> 矩形选框 <kbd>M</kbd></button>
-            <button data-tool="ellipse"><i>◯</i> 椭圆选框</button>
-            <button data-tool="lasso"><i>〰</i> 套索 <kbd>L</kbd></button>
-            <button data-tool="poly"><i>⬠</i> 多边形套索</button>
-            <button data-tool="hand"><i>✋</i> 抓手 <kbd>H</kbd></button>
-          </div>
+    <!-- 画布列：文档标签 + 标尺 + 画布 -->
+    <div id="canvas-col">
+      <div id="doctabs">
+        <div class="doc-tab active" id="doc-tab">
+          <svg class="ic doc-ic"><use href="#i-doc"/></svg>
+          <span class="doc-name" id="doc-tab-name">未命名.lbsh</span>
+          <span class="doc-dirty" id="doc-dirty" title="有未保存的修改"></span>
+          <button class="doc-close" id="doc-tab-close" title="关闭文档">×</button>
         </div>
-      </section>
+        <button class="doc-new" id="doc-new" title="新建文档 (⌘N)">＋</button>
+        <div class="doc-fill"></div>
+        <div class="doc-meta">sRGB · 8 位/通道</div>
+      </div>
 
-      <section class="panel" data-panel="brushes" data-dock="left">
-        <div class="panel-title"><span class="grip"></span><span class="name">笔刷仓库</span><button class="panel-collapse" title="折叠">–</button></div>
+      <div id="canvas-area" class="rulers-on">
+        <div id="ruler-corner" title="单位：px">px</div>
+        <canvas id="ruler-h"></canvas>
+        <canvas id="ruler-v"></canvas>
+        <div id="stage">
+          <canvas id="canvas"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右侧面板坞 -->
+    <aside id="dock-root" class="dock">
+      <div class="dock-resizer" title="拖动调整面板宽度"></div>
+
+      <div class="dock-group" data-group="color">
+        <div class="dock-head">
+          <div class="dock-tabs">
+            <button class="dock-tab active" data-tab="color">颜色</button>
+            <button class="dock-tab" data-tab="swatches">色板</button>
+          </div>
+          <button class="dock-btn dock-menu" data-menu="color" title="面板菜单">
+            <svg class="ic"><use href="#i-hamburger"/></svg>
+          </button>
+          <button class="dock-btn dock-toggle" title="折叠面板">
+            <svg class="ic"><use href="#i-chevron-down"/></svg>
+          </button>
+        </div>
+        <div class="dock-body">
+          <section class="panel" data-panel="color" data-name="颜色">
+            <div class="panel-body color-body">
+              <canvas id="color-wheel" width="160" height="160"></canvas>
+              <div class="color-readout">
+                <span class="mini-chip" id="panel-fg-chip"></span>
+                <input class="hex-input" id="color-hex" value="#222222" maxlength="7" spellcheck="false" title="十六进制颜色">
+                <span class="color-rgb" id="color-rgb">34, 34, 34</span>
+              </div>
+            </div>
+          </section>
+          <section class="panel" data-panel="swatches" data-name="色板">
+            <div class="panel-body swatches-body">
+              <div id="swatches"></div>
+              <button class="wide-btn" id="swatch-add">＋ 添加当前颜色</button>
+              <div class="panel-hint">左键应用 · 右键删除</div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="dock-splitter" data-resize="color"></div>
+
+      <div class="dock-group dock-grow" data-group="layers">
+        <div class="dock-head">
+          <div class="dock-tabs">
+            <button class="dock-tab active" data-tab="layers">图层</button>
+          </div>
+          <button class="dock-btn dock-menu" data-menu="layers" title="面板菜单">
+            <svg class="ic"><use href="#i-hamburger"/></svg>
+          </button>
+          <button class="dock-btn dock-toggle" title="折叠面板">
+            <svg class="ic"><use href="#i-chevron-down"/></svg>
+          </button>
+        </div>
+        <div class="dock-body">
+          <section class="panel" data-panel="layers" data-name="图层">
+            <div class="layers-top">
+              <select id="layer-blend" class="blend-select" title="混合模式">
+                <option value="source-over">正常</option>
+                <option value="multiply">正片叠底</option>
+                <option value="screen">滤色</option>
+                <option value="overlay">叠加</option>
+                <option value="soft-light">柔光</option>
+                <option value="darken">变暗</option>
+                <option value="lighten">变亮</option>
+                <option value="color-dodge">颜色加深</option>
+                <option value="lighter">线性减淡</option>
+              </select>
+              <div class="opacity-line">
+                <span>不透明度</span>
+                <input type="range" id="layer-opacity" min="0" max="100" value="100" title="图层不透明度">
+                <span id="layer-opacity-val" class="opacity-val">100%</span>
+              </div>
+            </div>
+            <div id="layer-list"></div>
+            <div class="layer-actions">
+              <button class="lb" id="btn-layer-mask" title="添加 / 启用蒙版">
+                <svg class="ic"><use href="#i-mask"/></svg>
+              </button>
+              <button class="lb" id="btn-layer-clip" title="剪贴蒙版（以下一层为基底）">
+                <svg class="ic"><use href="#i-clip"/></svg>
+              </button>
+              <button class="lb" id="btn-layer-lockalpha" title="锁定透明像素">
+                <svg class="ic"><use href="#i-alpha"/></svg>
+              </button>
+              <button class="lb" id="btn-layer-merge" title="向下合并">
+                <svg class="ic"><use href="#i-merge"/></svg>
+              </button>
+              <span class="vsep"></span>
+              <button class="lb" id="btn-layer-up" title="上移一层">
+                <svg class="ic"><use href="#i-arrow-up"/></svg>
+              </button>
+              <button class="lb" id="btn-layer-down" title="下移一层">
+                <svg class="ic"><use href="#i-arrow-down"/></svg>
+              </button>
+              <span class="flex-spacer"></span>
+              <button class="lb" id="btn-layer-group" title="新建组">
+                <svg class="ic"><use href="#i-folder-plus"/></svg>
+              </button>
+              <button class="lb" id="btn-layer-add" title="新建图层">
+                <svg class="ic"><use href="#i-plus"/></svg>
+              </button>
+              <button class="lb" id="btn-layer-del" title="删除图层">
+                <svg class="ic"><use href="#i-trash"/></svg>
+              </button>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="dock-splitter" data-resize="history"></div>
+
+      <div class="dock-group" data-group="history">
+        <div class="dock-head">
+          <div class="dock-tabs">
+            <button class="dock-tab active" data-tab="history">历史</button>
+            <button class="dock-tab" data-tab="navigator">导航器</button>
+          </div>
+          <button class="dock-btn dock-menu" data-menu="history" title="面板菜单">
+            <svg class="ic"><use href="#i-hamburger"/></svg>
+          </button>
+          <button class="dock-btn dock-toggle" title="折叠面板">
+            <svg class="ic"><use href="#i-chevron-down"/></svg>
+          </button>
+        </div>
+        <div class="dock-body">
+          <section class="panel" data-panel="history" data-name="历史">
+            <div class="hist-head">
+              <button class="lb" id="btn-hist-undo" title="撤销 (⌘Z)">
+                <svg class="ic"><use href="#i-undo"/></svg>
+              </button>
+              <button class="lb" id="btn-hist-redo" title="重做 (⇧⌘Z)">
+                <svg class="ic"><use href="#i-redo"/></svg>
+              </button>
+              <span id="hist-memory" class="hist-mem"></span>
+            </div>
+            <div id="history-list"></div>
+          </section>
+          <section class="panel" data-panel="navigator" data-name="导航器">
+            <div class="panel-body nav-body">
+              <canvas id="navigator" width="260" height="140"></canvas>
+              <div class="nav-hint">拖动红框平移视图</div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 浮动面板层 -->
+    <div id="floating-layer">
+      <section class="panel floating" data-panel="brushes" data-name="画笔" data-float="1" hidden>
+        <div class="panel-title">
+          <span class="panel-grip"></span>
+          <span class="name">画笔</span>
+          <span class="panel-sub">画笔预设</span>
+          <button class="panel-close" title="关闭">×</button>
+        </div>
         <div class="panel-body">
           <div class="brush-actions">
-            <button id="btn-import-abr" title="导入 Photoshop 笔刷（.abr，也可拖入窗口）">导入 .abr 笔刷</button>
+            <button class="wide-btn" id="btn-import-abr" title="导入 Photoshop 笔刷（.abr，也可拖入窗口）">导入 .abr 笔刷</button>
             <input type="file" id="file-abr" accept=".abr" style="display:none">
           </div>
           <div class="brush-grid" id="brush-presets"></div>
+          <div class="panel-hint">单击切换画笔 · 右键打开画笔设置</div>
         </div>
       </section>
 
-      <section class="panel" data-panel="dynamics" data-dock="left">
-        <div class="panel-title"><span class="grip"></span><span class="name">笔刷动态</span><button class="panel-collapse" title="折叠">–</button></div>
-        <div class="panel-body">
+      <section class="panel floating" data-panel="dynamics" data-name="画笔设置" data-float="1" hidden>
+        <div class="panel-title">
+          <span class="panel-grip"></span>
+          <span class="name">画笔设置</span>
+          <span class="panel-sub">动态</span>
+          <button class="panel-close" title="关闭">×</button>
+        </div>
+        <div class="panel-body dynamics-body">
           <div class="dyn-head">
             <span>压感曲线</span>
             <select id="dyn-curve-preset">
@@ -169,150 +464,95 @@
           </label>
         </div>
       </section>
-
-      <section class="panel" data-panel="color" data-dock="left">
-        <div class="panel-title"><span class="grip"></span><span class="name">颜色</span><button class="panel-collapse" title="折叠">–</button></div>
-        <div class="panel-body">
-          <canvas id="color-wheel" width="160" height="160"></canvas>
-          <div id="swatches"></div>
-        </div>
-      </section>
-
-      <section class="panel" data-panel="navigator" data-dock="right">
-        <div class="panel-title"><span class="grip"></span><span class="name">导航器</span><button class="panel-collapse" title="折叠">–</button></div>
-        <div class="panel-body">
-          <canvas id="navigator" width="216" height="160"></canvas>
-          <div class="panel-hint">拖动红框移动视野</div>
-        </div>
-      </section>
-
-      <section class="panel" data-panel="layers" data-dock="right">
-        <div class="panel-title"><span class="grip"></span><span class="name">图层</span><button class="panel-collapse" title="折叠">–</button></div>
-        <div class="panel-body">
-          <div class="layer-controls">
-            <select id="layer-blend" title="混合模式">
-              <option value="source-over">正常</option>
-              <option value="multiply">正片叠底</option>
-              <option value="screen">滤色</option>
-              <option value="overlay">叠加</option>
-              <option value="soft-light">柔光</option>
-              <option value="darken">变暗</option>
-              <option value="lighten">变亮</option>
-              <option value="color-dodge">颜色加深</option>
-              <option value="lighter">线性减淡</option>
-            </select>
-            <input type="range" id="layer-opacity" min="0" max="100" value="100" title="图层不透明度">
-            <span id="layer-opacity-val">100</span>
-          </div>
-          <div class="layer-controls btns">
-            <button id="btn-layer-add" title="新建图层">＋图层</button>
-            <button id="btn-layer-group" title="新建组">＋组</button>
-            <button id="btn-layer-del" title="删除">删除</button>
-            <button id="btn-layer-up" title="上移一层">↑</button>
-            <button id="btn-layer-down" title="下移一层">↓</button>
-          </div>
-          <div class="layer-controls btns">
-            <button id="btn-layer-mask" title="添加 / 启用蒙版">蒙版</button>
-            <button id="btn-layer-clip" title="剪贴蒙版（以下一层为基底）">剪贴</button>
-            <button id="btn-layer-merge" title="向下合并">合并</button>
-            <button id="btn-layer-lockalpha" title="锁定透明像素">锁α</button>
-          </div>
-          <div id="layer-list"></div>
-          <div class="panel-hint">点蒙版缩略图可编辑蒙版 · 双击名称重命名</div>
-        </div>
-      </section>
-
-      <section class="panel" data-panel="history" data-dock="right">
-        <div class="panel-title"><span class="grip"></span><span class="name">历史</span><button class="panel-collapse" title="折叠">–</button></div>
-        <div class="panel-body">
-          <div class="hist-head">
-            <button id="btn-hist-undo" title="撤销 (Cmd+Z)">↩</button>
-            <button id="btn-hist-redo" title="重做 (Shift+Cmd+Z)">↪</button>
-            <span id="hist-memory" class="hist-mem"></span>
-          </div>
-          <div id="history-list"></div>
-          <div class="panel-hint">点击任意步骤可直接跳转</div>
-        </div>
-      </section>
-
     </div>
   </main>
 
+  <!-- ===== 状态栏 ===== -->
   <footer id="statusbar">
-    <span id="status-doc">画布 1600 × 1600</span>
-    <span id="status-brush"></span>
+    <button class="zoom-mini" id="btn-zoom-out" title="缩小">−</button>
+    <button class="zoom-field" id="zoom-label" title="双击适合屏幕">100%</button>
+    <button class="zoom-mini" id="btn-zoom-in" title="放大">＋</button>
+    <span class="sb-sep"></span>
+    <span id="status-doc" title="文档尺寸">1600 × 1600 px</span>
+    <span class="sb-sep"></span>
     <span id="status-memory" title="像素存储：瓦片数 · 占用内存"></span>
-    <span id="status-pressure">压感: —</span>
+    <span class="sb-sep"></span>
+    <span id="status-brush"></span>
+    <span class="sb-fill"></span>
+    <span id="status-pressure">压感 —</span>
+    <span class="sb-sep"></span>
     <span id="status-color">前景 #222222</span>
-    <span id="status-autosave"></span>
-    <span class="hint">拖动标题栏可移动面板 · 拖到左右边缘贴合停靠 · 空格/H 抓手 · [ ] 调粗细</span>
+    <span class="sb-sep"></span>
+    <span id="status-autosave">未修改</span>
+    <span class="sb-sep"></span>
+    <span class="sb-version">beta12</span>
   </footer>
+</div>
 
-  <!-- 首页 / 欢迎页 -->
-  <div id="home" class="hidden">
-    <div class="home-top">
-      <div class="home-logo">墨</div>
-      <div class="home-brand">
-        <h1>落笔生花</h1>
-        <p>LUOBISHENGHUA · 专为绘画打造</p>
-      </div>
-      <div class="home-spacer"></div>
-      <button class="home-close" id="home-close">返回画布</button>
+<!-- ===== 首页 / 欢迎页 ===== -->
+<div id="home" class="hidden">
+  <div class="home-top">
+    <div class="home-logo">笔</div>
+    <div class="home-brand">
+      <h1>落笔生花</h1>
+      <p>LUOBISHENGHUA · 专业绘画工作台</p>
     </div>
+    <div class="home-spacer"></div>
+    <button class="home-close" id="home-close">返回画布</button>
+  </div>
 
-    <div id="recovery-banner" class="recovery hidden">
-      <span class="rec-ic">⟳</span>
-      <span class="rec-text">发现上次未保存的工作：<b id="recovery-name">未命名.lbsh</b><span id="recovery-time" class="rec-time"></span></span>
-      <button id="recovery-restore" class="primary">恢复</button>
-      <button id="recovery-discard">丢弃</button>
-    </div>
+  <div id="recovery-banner" class="recovery hidden">
+    <span class="rec-ic">⟳</span>
+    <span class="rec-text">发现上次未保存的工作：<b id="recovery-name">未命名.lbsh</b><span id="recovery-time" class="rec-time"></span></span>
+    <button id="recovery-restore" class="primary">恢复</button>
+    <button id="recovery-discard">丢弃</button>
+  </div>
 
-    <div class="home-grid">
-      <div>
-        <div class="home-section">
-          <h2>开始</h2>
-          <div class="home-actions">
-            <button class="home-action primary" id="home-new">
-              <span class="ic">＋</span>
-              <span class="t">新建画布</span>
-              <span class="d">自定义尺寸与预设</span>
-            </button>
-            <button class="home-action" id="home-open">
-              <span class="ic">📂</span>
-              <span class="t">打开 PSD</span>
-              <span class="d">继续编辑已有文档</span>
-            </button>
-            <button class="home-action" id="home-abr">
-              <span class="ic">🖌</span>
-              <span class="t">导入 .abr 笔刷</span>
-              <span class="d">接入 Photoshop 笔刷</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="home-section">
-          <h2>画布预设</h2>
-          <div class="preset-grid" id="preset-grid"></div>
+  <div class="home-grid">
+    <div>
+      <div class="home-section">
+        <h2>开始</h2>
+        <div class="home-actions">
+          <button class="home-action primary" id="home-new">
+            <span class="ic-wrap"><svg class="ic"><use href="#i-plus"/></svg></span>
+            <span class="t">新建画布</span>
+            <span class="d">自定义尺寸与预设</span>
+          </button>
+          <button class="home-action" id="home-open">
+            <span class="ic-wrap"><svg class="ic"><use href="#i-open"/></svg></span>
+            <span class="t">打开 PSD</span>
+            <span class="d">继续编辑已有文档</span>
+          </button>
+          <button class="home-action" id="home-abr">
+            <span class="ic-wrap"><svg class="ic"><use href="#i-brush"/></svg></span>
+            <span class="t">导入 .abr 笔刷</span>
+            <span class="d">接入 Photoshop 笔刷</span>
+          </button>
         </div>
       </div>
 
       <div class="home-section">
-        <h2>最近文件</h2>
-        <div class="recent-list" id="recent-list"></div>
+        <h2>画布预设</h2>
+        <div class="preset-grid" id="preset-grid"></div>
       </div>
     </div>
 
-    <div class="home-foot">
-      <span>落笔生花 Luobishenghua · beta11</span>
-      <span>WorkBuddy × likeweixue</span>
+    <div class="home-section">
+      <h2>最近文件</h2>
+      <div class="recent-list" id="recent-list"></div>
     </div>
   </div>
 
-  <div id="toast"></div>
+  <div class="home-foot">
+    <span>落笔生花 Luobishenghua · beta12</span>
+    <span>WorkBuddy × likeweixue</span>
+  </div>
+</div>
 
-  <script type="module" src="js/main.js"></script>
+<div id="toast"></div>
+<div id="modal-overlay" class="hidden"><div id="modal"></div></div>
+<div id="menu-layer"></div>
 
-  <!-- 模态对话框 -->
-  <div id="modal-overlay" class="hidden"><div id="modal"></div></div>
+<script type="module" src="js/main.js"></script>
 </body>
 </html>

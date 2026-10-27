@@ -3,7 +3,10 @@ import { Engine } from './engine.js';
 import { History } from './history.js';
 import { BrushPresets, BrushRegistry, registerCustomBrush, brushThumbnail, pressureSize, pressureAlpha, drawDab, getStamp } from './brushes.js';
 import { readABR } from './abr.js';
-import { initMenuBar, aboutDialog, shortcutsDialog, settingsDialog, newDocDialog } from './menu.js';
+import { initMenuBar, aboutDialog, shortcutsDialog, settingsDialog, newDocDialog, showMenuAt } from './menu.js';
+import { icon } from './icons.js';
+import { openColorPicker, normalizeHex } from './colorpicker.js';
+import { Rulers } from './rulers.js';
 import { createHome, addRecent, toast } from './home.js';
 import { serializeProject, deserializeProject, PROJECT_EXT } from './project.js';
 import { idbPut, idbGet, idbDelete } from './idb.js';
@@ -30,6 +33,12 @@ import { Navigator } from './navigator.js';
 import { LayerStack } from './layers.js';
 import { readPSD, writePSD } from './psd.js';
 
+// Tauri 桌面端标记：macOS 使用覆盖式标题栏，给窗口红绿灯留出空间
+if (window.__TAURI__ || window.__TAURI_INTERNALS__) {
+  document.body.classList.add('tauri');
+  if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) document.body.classList.add('tauri-mac');
+}
+
 const canvas = document.getElementById('canvas');
 const stage = document.getElementById('stage');
 const engine = new Engine(canvas, 1600, 1600);
@@ -38,6 +47,7 @@ engine.layers = layers;
 const history = new History(engine, layers, settings.undoLimit);
 const dock = new Dock(document.getElementById('dock-root'), stage);
 const navigatorPanel = new Navigator(document.getElementById('navigator'), engine, stage);
+const rulers = new Rulers(engine, document.getElementById('canvas-area'), document.getElementById('ruler-h'), document.getElementById('ruler-v'));
 const selection = new Selection(1600, 1600);
 engine.selection = selection;
 const transform = new Transform(engine, layers, history, selection);
@@ -46,6 +56,7 @@ const state = {
   tool: 'brush',          // brush | eraser | hand
   brush: 'hard',          // 当前画笔预设（橡皮是独立工具）
   color: '#222222',
+  bgColor: '#ffffff',
   size: 24,
   opacity: 1,
   smoothing: 0,           // 防抖强度 0..1
@@ -83,7 +94,7 @@ else Dynamics.rebuild();
 
 const AUTOSAVE_KEY = 'autosave';
 let currentProjectPath = null;
-let currentProjectName = '未命名.lbsh';
+let currentProjectName = '未命名-1.lbsh';
 let dirty = false;
 let autosaveTimer = null;
 let autosaving = false;
@@ -106,19 +117,28 @@ function hideHome() { if (homeApi) homeApi.hide(); }
 const toolBtns = document.querySelectorAll('#tool-list button');
 
 const TOOL_META = {
-  brush: { icon: '✏', name: '画笔' },
-  eraser: { icon: '◻', name: '橡皮擦' },
-  move: { icon: '✥', name: '移动' },
-  rect: { icon: '▭', name: '矩形选框' },
-  ellipse: { icon: '◯', name: '椭圆选框' },
-  lasso: { icon: '〰', name: '套索' },
-  poly: { icon: '⬠', name: '多边形套索' },
-  smudge: { icon: '◍', name: '涂抹' },
-  bucket: { icon: '▨', name: '油漆桶' },
-  gradient: { icon: '▤', name: '渐变' },
-  eyedropper: { icon: '⚲', name: '吸管' },
-  hand: { icon: '✋', name: '抓手' },
+  brush: { icon: 'brush', name: '画笔' },
+  eraser: { icon: 'eraser', name: '橡皮擦' },
+  move: { icon: 'move', name: '移动' },
+  rect: { icon: 'marquee', name: '矩形选框' },
+  ellipse: { icon: 'ellipse', name: '椭圆选框' },
+  lasso: { icon: 'lasso', name: '套索' },
+  poly: { icon: 'poly', name: '多边形套索' },
+  smudge: { icon: 'smudge', name: '涂抹' },
+  bucket: { icon: 'bucket', name: '油漆桶' },
+  gradient: { icon: 'gradient', name: '渐变' },
+  eyedropper: { icon: 'eyedropper', name: '吸管' },
+  hand: { icon: 'hand', name: '抓手' },
+  zoom: { icon: 'zoom', name: '缩放' },
 };
+
+const TOOL_GROUPS = {
+  marquee: ['rect', 'ellipse'],
+  lasso: ['lasso', 'poly'],
+  brush: ['brush', 'eraser', 'smudge'],
+  fill: ['bucket', 'gradient', 'eyedropper'],
+};
+const TOOL_KEYS = { brush: 'B', eraser: 'E', smudge: 'S', move: 'V', rect: 'M', ellipse: '⇧M', lasso: 'L', poly: '⇧L', bucket: 'G', gradient: '⇧G', eyedropper: 'I', hand: 'H', zoom: 'Z' };
 
 // 需要「粗细 / 不透明度 / 防抖」的工具
 const BRUSHISH = ['brush', 'eraser', 'smudge'];
@@ -127,14 +147,16 @@ const SELECT_TOOLS = ['rect', 'ellipse', 'lasso', 'poly'];
 function isSelectTool(t) { return SELECT_TOOLS.includes(t); }
 
 function refreshOptionsBarTool() {
-  const icon = document.getElementById('opt-tool-icon');
   const name = document.getElementById('opt-tool-name');
-  if (!icon || !name) return;
+  const use = document.getElementById('opt-tool-use');
+  if (!name) return;
   const meta = TOOL_META[state.tool] || TOOL_META.brush;
-  icon.textContent = meta.icon;
+  if (use) use.setAttribute('href', '#i-' + meta.icon);
   if (state.tool === 'brush') {
     const b = BrushRegistry.get(state.brush);
     name.textContent = '画笔' + (b && b.custom ? ' · ' + b.name : '');
+  } else if (state.tool === 'eraser') {
+    name.textContent = '橡皮擦';
   } else {
     name.textContent = meta.name;
   }
@@ -151,6 +173,7 @@ function updateOptionsBar() {
   document.getElementById('opt-pick-group').classList.toggle('hidden', state.tool !== 'eyedropper');
   document.getElementById('opt-transform-group').classList.toggle('hidden', !tr);
   document.getElementById('opt-select-group').classList.toggle('hidden', !selish);
+  document.getElementById('opt-zoom-group').classList.toggle('hidden', state.tool !== 'zoom');
   document.getElementById('btn-sel-none').disabled = !selection.active;
   document.getElementById('btn-sel-invert').disabled = !selection.active;
   document.getElementById('btn-sel-feather').disabled = !selection.active;
@@ -174,19 +197,46 @@ function setTool(tool) {
   toolBtns.forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
   canvas.classList.toggle('panning', tool === 'hand');
   canvas.classList.toggle('moving', tool === 'move');
+  canvas.classList.toggle('zooming', tool === 'zoom');
   updateOptionsBar();
   updateStatus();
+  renderBrushPreview();
 }
 toolBtns.forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+toolBtns.forEach(b => b.addEventListener('contextmenu', (e) => {
+  const group = b.dataset.group;
+  if (!group || !TOOL_GROUPS[group]) return;
+  e.preventDefault();
+  showMenuAt(b, TOOL_GROUPS[group].map(t => ({
+    label: TOOL_META[t].name,
+    shortcut: TOOL_KEYS[t],
+    icon: TOOL_META[t].icon,
+    checked: state.tool === t,
+    action: () => setTool(t),
+  })), { align: 'left' });
+}));
 
 /* ---------------- 笔刷仓库 ---------------- */
 
 const presetsEl = document.getElementById('brush-presets');
+const brushPreview = document.getElementById('brush-preview');
+
+function renderBrushPreview() {
+  if (!brushPreview) return;
+  const ctx = brushPreview.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, brushPreview.width, brushPreview.height);
+  const id = state.tool === 'eraser' ? 'eraser' : state.brush;
+  const brush = BrushRegistry.get(id) || BrushRegistry.get('hard');
+  if (!brush) return;
+  const t = brushThumbnail(brush, brushPreview.width, brushPreview.height, state.color);
+  ctx.drawImage(t, 0, 0);
+}
 
 function renderBrushGrid() {
   presetsEl.innerHTML = '';
   for (const [id, brush] of BrushRegistry) {
-    if (id === 'eraser') continue; // 橡皮在工具面板
+    if (id === 'eraser') continue; // 橡皮是独立工具
     const btn = document.createElement('button');
     btn.dataset.brush = id;
     btn.title = brush.custom ? `${brush.name}（${brush.diameter}px 笔尖）` : brush.name;
@@ -196,11 +246,30 @@ function renderBrushGrid() {
     btn.appendChild(label);
     if (id === state.brush) btn.classList.add('active');
     btn.addEventListener('click', () => setBrush(id));
+    btn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      dock.openPanel('dynamics', { anchor: btn });
+    });
     presetsEl.appendChild(btn);
   }
+  renderBrushPreview();
   dock.reflowBoth();
 }
 renderBrushGrid();
+
+function toggleBrushAux(id, anchor) {
+  // 画笔预设与画笔设置都属于辅助浮层：打开一个时收起另一个，避免叠在一起
+  const other = id === 'brushes' ? 'dynamics' : 'brushes';
+  if (!dock.isVisible(id) && dock.isVisible(other)) dock.closePanel(other);
+  dock.togglePanel(id, { anchor });
+}
+
+document.getElementById('btn-brush-preset').addEventListener('click', (e) => {
+  toggleBrushAux('brushes', e.currentTarget);
+});
+document.getElementById('btn-brush-settings').addEventListener('click', (e) => {
+  toggleBrushAux('dynamics', e.currentTarget);
+});
 
 function setBrush(id) {
   if (id === 'eraser') { setTool('eraser'); return; }
@@ -257,25 +326,123 @@ document.getElementById('file-abr').addEventListener('change', (e) => {
 /* ---------------- 颜色 ---------------- */
 
 const colorChip = document.getElementById('color-chip');
+const bgChip = document.getElementById('color-bg-chip');
+const panelFgChip = document.getElementById('panel-fg-chip');
+const colorHexInput = document.getElementById('color-hex');
+const colorRgbLabel = document.getElementById('color-rgb');
+const statusColorEl = document.getElementById('status-color');
+
+function applyColor(hex, opts = {}) {
+  const norm = normalizeHex(hex) || '#000000';
+  state.color = norm;
+  if (colorChip) colorChip.style.background = norm;
+  if (panelFgChip) panelFgChip.style.background = norm;
+  if (!opts.noWheel) wheel.setHex(norm);
+  if (!opts.noInput && colorHexInput && document.activeElement !== colorHexInput) {
+    colorHexInput.value = norm.toUpperCase();
+  }
+  if (colorRgbLabel) {
+    const v = norm.replace('#', '');
+    colorRgbLabel.textContent = `${parseInt(v.slice(0, 2), 16)}, ${parseInt(v.slice(2, 4), 16)}, ${parseInt(v.slice(4, 6), 16)}`;
+  }
+  if (statusColorEl) statusColorEl.textContent = `前景 ${norm.toUpperCase()}`;
+  renderBrushPreview();
+  return norm;
+}
+
+function applyBgColor(hex) {
+  const norm = normalizeHex(hex) || '#ffffff';
+  state.bgColor = norm;
+  if (bgChip) bgChip.style.background = norm;
+  return norm;
+}
+
 const wheel = new ColorWheel(document.getElementById('color-wheel'), (hex) => {
-  state.color = hex;
-  colorChip.style.background = hex;
+  applyColor(hex, { noWheel: true });
 });
 wheel.setHex(state.color);
 
 const swatchesEl = document.getElementById('swatches');
-const swatchColors = ['#222222', '#e24b4a', '#ef9f27', '#f7d154', '#378add', '#1d9e75', '#7f77dd', '#8b5e3c', '#ffffff', '#888888'];
-for (const c of swatchColors) {
-  const s = document.createElement('div');
-  s.className = 'swatch';
-  s.style.background = c;
-  s.addEventListener('click', () => {
-    state.color = c;
-    wheel.setHex(c);
-    colorChip.style.background = c;
-  });
-  swatchesEl.appendChild(s);
+const DEFAULT_SWATCHES = ['#222222', '#e24b4a', '#ef9f27', '#f7d154', '#378add', '#1d9e75', '#7f77dd', '#8b5e3c', '#ffffff', '#888888'];
+let swatchColors = (() => {
+  try {
+    const arr = JSON.parse(localStorage.getItem('lbsh-swatches') || 'null');
+    if (Array.isArray(arr) && arr.length) return arr.map(normalizeHex).filter(Boolean);
+  } catch { /* ignore */ }
+  return DEFAULT_SWATCHES.slice();
+})();
+
+function saveSwatches() {
+  try { localStorage.setItem('lbsh-swatches', JSON.stringify(swatchColors)); } catch { /* ignore */ }
 }
+
+function renderSwatches() {
+  if (!swatchesEl) return;
+  swatchesEl.innerHTML = '';
+  for (const c of swatchColors) {
+    const el = document.createElement('div');
+    el.className = 'swatch';
+    el.style.background = c;
+    el.title = c.toUpperCase() + '（右键删除）';
+    el.addEventListener('click', () => applyColor(c));
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      swatchColors = swatchColors.filter(x => x !== c);
+      if (!swatchColors.length) swatchColors = DEFAULT_SWATCHES.slice();
+      saveSwatches();
+      renderSwatches();
+    });
+    swatchesEl.appendChild(el);
+  }
+}
+
+function addSwatch(c) {
+  const norm = normalizeHex(c);
+  if (!norm) return;
+  if (!swatchColors.includes(norm)) swatchColors.push(norm);
+  saveSwatches();
+  renderSwatches();
+}
+
+colorHexInput?.addEventListener('input', () => {
+  const h = normalizeHex(colorHexInput.value);
+  if (h) applyColor(h, { noInput: true });
+});
+colorHexInput?.addEventListener('blur', () => {
+  if (colorHexInput) colorHexInput.value = state.color.toUpperCase();
+});
+colorHexInput?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); colorHexInput.blur(); }
+});
+
+document.getElementById('btn-color-fg').addEventListener('click', () => {
+  openColorPicker(state.color, {
+    title: '拾色器（前景色）',
+    onPreview: (h) => applyColor(h),
+    onCommit: (h) => applyColor(h),
+  });
+});
+document.getElementById('btn-color-bg').addEventListener('click', () => {
+  openColorPicker(state.bgColor, {
+    title: '拾色器（背景色）',
+    onPreview: (h) => applyBgColor(h),
+    onCommit: (h) => applyBgColor(h),
+  });
+});
+document.getElementById('btn-swap-colors').addEventListener('click', () => {
+  const fg = state.color;
+  applyColor(state.bgColor);
+  applyBgColor(fg);
+});
+document.getElementById('btn-default-colors').addEventListener('click', () => {
+  applyColor('#000000');
+  applyBgColor('#ffffff');
+});
+document.getElementById('swatch-add').addEventListener('click', () => addSwatch(state.color));
+
+applyColor(state.color, { noWheel: false });
+applyBgColor(state.bgColor);
+renderSwatches();
 
 /* ---------------- 工具属性 ---------------- */
 
@@ -463,7 +630,7 @@ function renderLayerPanel() {
 
     const eye = document.createElement('span');
     eye.className = 'eye' + (l.visible ? '' : ' off');
-    eye.textContent = '👁';
+    eye.innerHTML = icon(l.visible ? 'eye' : 'eye-off');
     eye.title = '显示/隐藏';
     eye.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -484,10 +651,10 @@ function renderLayerPanel() {
         history.pushFull('展开/折叠组');
         layers.toggleExpanded(l.id);
       });
-      const icon = document.createElement('span');
-      icon.className = 'licon';
-      icon.textContent = '📁';
-      row.append(arrow, icon);
+      const folderIcon = document.createElement('span');
+      folderIcon.className = 'licon';
+      folderIcon.innerHTML = icon('folder');
+      row.append(arrow, folderIcon);
       if (l.mask) row.appendChild(makeMaskThumb(l));
       row.appendChild(makeNameEl(l));
     } else {
@@ -503,9 +670,9 @@ function renderLayerPanel() {
 
       const tags = document.createElement('span');
       tags.className = 'ltags';
-      if (l.clipping) tags.insertAdjacentHTML('beforeend', '<span class="ltag clip" title="剪贴蒙版">↳</span>');
-      if (l.lockAlpha) tags.insertAdjacentHTML('beforeend', '<span class="ltag lock" title="锁定透明像素">α</span>');
-      if (l.locked) tags.insertAdjacentHTML('beforeend', '<span class="ltag lock" title="锁定">🔒</span>');
+      if (l.clipping) tags.insertAdjacentHTML('beforeend', `<span class="ltag clip" title="剪贴蒙版">${icon('clip')}</span>`);
+      if (l.lockAlpha) tags.insertAdjacentHTML('beforeend', `<span class="ltag lock" title="锁定透明像素">${icon('alpha')}</span>`);
+      if (l.locked) tags.insertAdjacentHTML('beforeend', `<span class="ltag lock" title="锁定">${icon('lock')}</span>`);
       row.appendChild(tags);
     }
 
@@ -568,7 +735,7 @@ function syncLayerControls() {
   if (!n) return;
   blendSelect.value = n.blend;
   layerOpacityInput.value = Math.round(n.opacity * 100);
-  document.getElementById('layer-opacity-val').textContent = Math.round(n.opacity * 100);
+  document.getElementById('layer-opacity-val').textContent = Math.round(n.opacity * 100) + '%';
 
   const locked = n.locked;
   const isGroup = n.type === 'group';
@@ -582,7 +749,9 @@ function syncLayerControls() {
 
   const mBtn = document.getElementById('btn-layer-mask');
   mBtn.disabled = locked;
-  mBtn.textContent = !n.mask ? '蒙版' : (n.mask.enabled ? '蒙版✓' : '蒙版✕');
+  mBtn.classList.toggle('on', !!n.mask);
+  mBtn.classList.toggle('off', !!(n.mask && !n.mask.enabled));
+  mBtn.title = !n.mask ? '添加蒙版' : (n.mask.enabled ? '停用蒙版' : '启用蒙版');
 
   const cBtn = document.getElementById('btn-layer-clip');
   cBtn.disabled = isGroup && false;
@@ -657,7 +826,7 @@ blendSelect.addEventListener('change', () => {
 layerOpacityInput.addEventListener('pointerdown', () => history.pushFull('图层不透明度'));
 layerOpacityInput.addEventListener('input', () => {
   layers.setOpacity(+layerOpacityInput.value / 100);
-  document.getElementById('layer-opacity-val').textContent = layerOpacityInput.value;
+  document.getElementById('layer-opacity-val').textContent = layerOpacityInput.value + '%';
   engine.render();
 });
 
@@ -711,7 +880,11 @@ function refreshHistoryPanel() {
 
 history.onChange = () => {
   refreshHistoryPanel();
-  if (!suppressDirty) dirty = true;
+  if (!suppressDirty) {
+    dirty = true;
+    updateDocTab();
+    setAutosaveStatus('未保存');
+  }
   const btnU = document.getElementById('btn-hist-undo');
   const btnR = document.getElementById('btn-hist-redo');
   if (btnU) btnU.disabled = !history.canUndo;
@@ -737,7 +910,7 @@ async function applyProject(project, meta = {}) {
   layers.activeId = (active || fallback)?.id || null;
 
   engine.setDocSize(project.width, project.height);
-  document.getElementById('status-doc').textContent = `画布 ${project.width} × ${project.height}`;
+  setDocLabel(project.width, project.height);
   resetHistory();
   renderLayerPanel();
   engine.resize();
@@ -747,6 +920,7 @@ async function applyProject(project, meta = {}) {
   currentProjectPath = meta.path || null;
   currentProjectName = meta.name || `未命名.${PROJECT_EXT}`;
   dirty = false;
+  updateDocTab();
   addRecent({ name: currentProjectName, path: currentProjectPath, w: project.width, h: project.height });
   hideHome();
   setAutosaveStatus('未修改');
@@ -773,6 +947,7 @@ async function saveProject({ saveAs = false } = {}) {
       await saveBytes(bytes, currentProjectName || `luobishenghua.${PROJECT_EXT}`, '落笔生花工程', [PROJECT_EXT]);
     }
     dirty = false;
+    updateDocTab();
     await idbDelete(AUTOSAVE_KEY);
     setAutosaveStatus('已保存');
     addRecent({ name: currentProjectName, path: currentProjectPath, w: layers.w, h: layers.h });
@@ -882,9 +1057,25 @@ document.getElementById('recovery-discard').addEventListener('click', async () =
 
 /* ---------------- 顶栏操作 ---------------- */
 
+function setDocLabel(w, h) {
+  const el = document.getElementById('status-doc');
+  if (el) el.textContent = `${w} × ${h} px`;
+}
+
+function updateDocTab() {
+  const tab = document.getElementById('doc-tab');
+  const nameEl = document.getElementById('doc-tab-name');
+  if (!tab || !nameEl) return;
+  const base = (currentProjectName || '未命名.lbsh').replace(/\.lbsh$/i, '');
+  nameEl.textContent = base;
+  tab.classList.toggle('modified', dirty);
+  tab.title = (currentProjectName || '未命名.lbsh') + (dirty ? ' — 有未保存的修改' : '');
+  document.title = `${base}${dirty ? ' •' : ''} — 落笔生花`;
+}
+
 function updateStatus() {
   const name = state.tool === 'brush'
-    ? BrushRegistry.get(state.brush).name
+    ? (BrushRegistry.get(state.brush)?.name || '画笔')
     : (TOOL_META[state.tool]?.name || '画笔');
   const selInfo = selection.active && selection.bounds
     ? ` · 选区 ${selection.bounds.w}×${selection.bounds.h}`
@@ -892,14 +1083,14 @@ function updateStatus() {
   document.getElementById('status-brush').textContent =
     `${name} · ${state.size}px · ${layers.active ? layers.active.name : ''}${selInfo}`;
 
-  // 瓦片存储的实时占用（这版重构的核心指标）
   const memEl = document.getElementById('status-memory');
   if (memEl) {
-    memEl.textContent = `${layers.tileCount()} 瓦片 · ${fmtBytes(layers.pixelBytes())}`;
+    memEl.textContent = `${fmtBytes(layers.pixelBytes())} · ${layers.tileCount()} 瓦片`;
   }
   document.getElementById('btn-undo').disabled = !history.canUndo;
   document.getElementById('btn-redo').disabled = !history.canRedo;
   document.getElementById('zoom-label').textContent = Math.round(engine.view.scale * 100) + '%';
+  updateDocTab();
 }
 
 document.getElementById('btn-undo').addEventListener('click', () => { history.undo(); refreshThumbs(); updateStatus(); });
@@ -931,6 +1122,15 @@ function clearActiveLayer() {
 /* ---------------- 文件保存桥（Tauri 桌面 / Web 回退） ---------------- */
 
 const TAURI = window.__TAURI__ || null;
+
+// 覆盖式标题栏：双击空白标题区域最大化 / 还原（macOS 习惯）
+if (TAURI && TAURI.window && /Mac/i.test(navigator.platform || navigator.userAgent)) {
+  const bar = document.getElementById('menubar');
+  bar.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.menu-item, .menubar-right, .menus, .app-badge')) return;
+    try { TAURI.window.getCurrentWindow().toggleMaximize(); } catch { /* ignore */ }
+  });
+}
 
 async function saveBytes(bytes, defaultName, filterName, exts) {
   if (TAURI && TAURI.dialog && TAURI.fs) {
@@ -984,7 +1184,7 @@ function loadDocumentFromPSD(psd, meta = {}) {
     layers.activeId = last ? last.id : null;
   }
   engine.setDocSize(psd.width, psd.height);
-  document.getElementById('status-doc').textContent = `画布 ${psd.width} × ${psd.height}`;
+  setDocLabel(psd.width, psd.height);
   resetHistory();
   renderLayerPanel();
   engine.resize();
@@ -1000,6 +1200,7 @@ function loadDocumentFromPSD(psd, meta = {}) {
   currentProjectPath = null;
   currentProjectName = (meta.name || '未命名').replace(/\.[^.]+$/, '') + '.' + PROJECT_EXT;
   dirty = true;
+  updateDocTab();
   setAutosaveStatus('未保存');
   hideHome();
 }
@@ -1118,15 +1319,16 @@ function newDocument(w, h) {
   layers.layers.push(l1);
   layers.activeId = l1.id;
   engine.setDocSize(w, h);
-  document.getElementById('status-doc').textContent = `画布 ${w} × ${h}`;
+  setDocLabel(w, h);
   resetHistory();
   renderLayerPanel();
   engine.resize();
   engine.fit();
   updateStatus();
   currentProjectPath = null;
-  currentProjectName = `未命名 ${untitledCount}.${PROJECT_EXT}`;
+  currentProjectName = `未命名-${++untitledCount}.${PROJECT_EXT}`;
   dirty = false;
+  updateDocTab();
   setAutosaveStatus('未修改');
   addRecent({ name: currentProjectName, w, h });
   hideHome();
@@ -1167,6 +1369,108 @@ document.getElementById('btn-home').addEventListener('click', () => {
 
 /* ---------------- 菜单栏 ---------------- */
 
+function zoom100() {
+  const s = engine.view.scale;
+  if (s > 0) engine.zoomAt(canvas.clientWidth / 2, canvas.clientHeight / 2, 1 / s);
+  updateStatus();
+}
+
+function toolbarVisible() {
+  return !document.body.classList.contains('toolbar-hidden');
+}
+function toggleToolbar() {
+  document.body.classList.toggle('toolbar-hidden');
+  engine.resize();
+  updateStatus();
+}
+function togglePanels() {
+  document.body.classList.toggle('panels-hidden');
+  engine.resize();
+}
+function resetSwatches() {
+  swatchColors = DEFAULT_SWATCHES.slice();
+  saveSwatches();
+  renderSwatches();
+}
+
+function openPreferences() {
+  settingsDialog(settings, (s) => {
+    Object.assign(settings, s);
+    history.limit = settings.undoLimit;
+    saveSettings();
+    scheduleAutosave();
+  });
+}
+
+function panelMenuItems(id) {
+  const click = (elId) => () => document.getElementById(elId)?.click();
+  switch (id) {
+    case 'color':
+      return [
+        { label: '复制十六进制', shortcut: state.color.toUpperCase(), icon: 'edit', action: () => {
+          navigator.clipboard?.writeText(state.color.toUpperCase());
+          toast('颜色已复制');
+        } },
+        { label: '拾色器…', icon: 'search', action: () => document.getElementById('btn-color-fg').click() },
+        { sep: true },
+        { label: '默认前景 / 背景色', icon: 'default-colors', action: () => document.getElementById('btn-default-colors').click() },
+      ];
+    case 'swatches':
+      return [
+        { label: '添加当前颜色', icon: 'plus', action: () => addSwatch(state.color) },
+        { label: '恢复默认色板', icon: 'undo', action: resetSwatches },
+      ];
+    case 'layers':
+      return [
+        { label: '新建图层', icon: 'plus', action: click('btn-layer-add') },
+        { label: '新建组', icon: 'folder-plus', action: click('btn-layer-group') },
+        { sep: true },
+        { label: '添加 / 启用蒙版', icon: 'mask', action: click('btn-layer-mask') },
+        { label: '剪贴蒙版', icon: 'clip', action: click('btn-layer-clip') },
+        { label: '锁定透明像素', icon: 'alpha', action: click('btn-layer-lockalpha') },
+        { sep: true },
+        { label: '向下合并', icon: 'merge', action: click('btn-layer-merge') },
+        { label: '拼合图像', icon: 'layer-stack', action: () => layerOp('拼合图像', () => !!layers.flatten()) },
+        { sep: true },
+        { label: '删除图层', icon: 'trash', action: click('btn-layer-del') },
+      ];
+    case 'history':
+      return [
+        { label: '撤销', shortcut: '⌘Z', icon: 'undo', action: click('btn-hist-undo') },
+        { label: '重做', shortcut: '⇧⌘Z', icon: 'redo', action: click('btn-hist-redo') },
+        { sep: true },
+        { label: '清除历史记录', icon: 'trash', action: () => {
+          if (!confirm('清除全部历史记录？（不影响画面内容）')) return;
+          resetHistory();
+          refreshHistoryPanel();
+          updateStatus();
+        } },
+      ];
+    case 'navigator':
+      return [
+        { label: '适合屏幕', shortcut: '⌘0', icon: 'fit', action: () => { engine.fit(); updateStatus(); } },
+        { label: '实际像素', shortcut: '⌘1', icon: 'search', action: zoom100 },
+      ];
+    case 'brushes':
+      return [
+        { label: '导入 .abr 笔刷…', icon: 'open', action: click('btn-import-abr') },
+        { label: '画笔设置', icon: 'sliders', action: () => { dock.closePanel('brushes'); dock.openPanel('dynamics', { anchor: document.getElementById('btn-brush-settings') }); } },
+        { sep: true },
+        { label: '关闭面板', icon: 'close', action: () => dock.closePanel('brushes') },
+      ];
+    case 'dynamics':
+      return [
+        { label: '重置画笔动态', icon: 'undo', action: () => { Dynamics.rebuild(); syncDynamicsUI(); persistDynamics(); } },
+        { label: '关闭面板', icon: 'close', action: () => dock.closePanel('dynamics') },
+      ];
+    default:
+      return [];
+  }
+}
+
+dock.onPanelMenu = (id, anchor) => showMenuAt(anchor, panelMenuItems(id), { align: 'left' });
+dock.onLayout = () => engine.resize();
+
 initMenuBar({
   about: aboutDialog,
   home: () => homeApi && homeApi.show(),
@@ -1202,22 +1506,35 @@ initMenuBar({
   zoomIn: () => zoomCenter(1.25),
   zoomOut: () => zoomCenter(0.8),
   resetView: () => { engine.fit(); updateStatus(); },
+  zoom100,
   rotateLeft: () => { engine.rotateBy(-Math.PI / 12); updateStatus(); },
   rotateRight: () => { engine.rotateBy(Math.PI / 12); updateStatus(); },
+  toggleRulers: () => rulers.toggle(),
+  rulersOn: () => rulers.enabled,
+  toggleToolbar,
+  toolbarVisible,
+  togglePanels,
   resetLayout: () => dock.resetLayout(),
   panelList: () => dock.panelInfo(),
   togglePanel: (id) => dock.togglePanel(id),
-  settings: () => settingsDialog(settings, (s) => {
-    Object.assign(settings, s);
-    history.limit = settings.undoLimit;
-    saveSettings();
-    scheduleAutosave();
-  }),
+  settings: openPreferences,
   shortcuts: shortcutsDialog,
 });
 document.getElementById('btn-rotate-left').addEventListener('click', () => { engine.rotateBy(-Math.PI / 12); updateStatus(); });
 document.getElementById('btn-rotate-right').addEventListener('click', () => { engine.rotateBy(Math.PI / 12); updateStatus(); });
 document.getElementById('btn-reset-view').addEventListener('click', () => { engine.fit(); updateStatus(); });
+document.getElementById('btn-zoom-in').addEventListener('click', () => zoomCenter(1.25));
+document.getElementById('btn-zoom-out').addEventListener('click', () => zoomCenter(0.8));
+document.getElementById('btn-zoom-fit').addEventListener('click', () => { engine.fit(); updateStatus(); });
+document.getElementById('btn-zoom-100').addEventListener('click', zoom100);
+document.getElementById('zoom-label').addEventListener('dblclick', () => { engine.fit(); updateStatus(); });
+document.getElementById('btn-settings').addEventListener('click', openPreferences);
+document.getElementById('btn-shortcuts').addEventListener('click', shortcutsDialog);
+document.getElementById('doc-new').addEventListener('click', () => newDocDialog(settings, (w, h) => newDocument(w, h)));
+document.getElementById('doc-tab-close').addEventListener('click', () => {
+  if (dirty && !confirm('文档有未保存的修改，仍要关闭吗？')) return;
+  homeApi?.show();
+});
 
 /* ---------------- 笔画管线 ---------------- */
 
@@ -1425,11 +1742,7 @@ function selMask() {
 }
 
 function setColor(hex) {
-  state.color = hex;
-  wheel.setHex(hex);
-  colorChip.style.background = hex;
-  const el = document.getElementById('status-color');
-  if (el) el.textContent = `前景 ${hex}`;
+  applyColor(hex);
 }
 
 function doBucketFill(e) {
@@ -1901,6 +2214,12 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   if (e.button !== 0) return;
 
+  if (state.tool === 'zoom') {
+    engine.zoomAt(e.offsetX, e.offsetY, e.altKey ? 0.8 : 1.25);
+    updateStatus();
+    return;
+  }
+
   // 1) 自由变换进行中：先处理手柄 / 框内拖动
   if (transform.active) {
     const handle = transform.hitTest(e.offsetX, e.offsetY);
@@ -2029,6 +2348,27 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
+  if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    togglePanels();
+    return;
+  }
+  if (e.key === 'F5') {
+    e.preventDefault();
+    toggleBrushAux('dynamics', document.getElementById('btn-brush-settings'));
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === '0') {
+    e.preventDefault();
+    engine.fit();
+    updateStatus();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === '1') {
+    e.preventDefault();
+    zoom100();
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
     e.preventDefault();
     if (transform.active) return;  // 变换中不响应撤销
@@ -2090,6 +2430,11 @@ window.addEventListener('keydown', (e) => {
     fillSelection();
     return;
   }
+  if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+    e.preventDefault();
+    openPreferences();
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
     e.preventDefault();
     newDocDialog(settings, newDocument);
@@ -2105,9 +2450,18 @@ window.addEventListener('keydown', (e) => {
     saveProject({ saveAs: e.shiftKey });
     return;
   }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === '[') { sizeInput.value = Math.max(1, +sizeInput.value - 4); sizeInput.dispatchEvent(new Event('input')); }
   if (e.key === ']') { sizeInput.value = Math.min(200, +sizeInput.value + 4); sizeInput.dispatchEvent(new Event('input')); }
   if (e.key === '0') { engine.fit(); updateStatus(); }
+  if (e.key.toLowerCase() === 'x') {
+    document.getElementById('btn-swap-colors').click();
+    return;
+  }
+  if (e.key.toLowerCase() === 'd') {
+    document.getElementById('btn-default-colors').click();
+    return;
+  }
   if (e.key.toLowerCase() === 'e') setTool('eraser');
   if (e.key.toLowerCase() === 'b') setTool('brush');
   if (e.key.toLowerCase() === 'h') setTool('hand');
@@ -2117,6 +2471,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key.toLowerCase() === 's') setTool('smudge');
   if (e.key.toLowerCase() === 'g') setTool(e.shiftKey ? 'gradient' : 'bucket');
   if (e.key.toLowerCase() === 'i') setTool('eyedropper');
+  if (e.key.toLowerCase() === 'z') setTool('zoom');
 });
 window.addEventListener('keyup', (e) => {
   if (e.code === 'Space') {
@@ -2138,6 +2493,24 @@ refreshHistoryPanel();
 scheduleAutosave();
 checkRecovery();
 setAutosaveStatus('未修改');
+
+// 滑块已填充比例（PS 风格：进度部分高亮）
+function syncRangeFill(el) {
+  const min = Number(el.min) || 0;
+  const max = Number(el.max) || 100;
+  const val = Number(el.value) || 0;
+  const pct = max > min ? ((val - min) / (max - min)) * 100 : 0;
+  el.style.setProperty('--fill', Math.max(0, Math.min(100, pct)).toFixed(2) + '%');
+}
+document.querySelectorAll('input[type="range"]').forEach(syncRangeFill);
+document.addEventListener('input', (e) => {
+  if (e.target instanceof HTMLInputElement && e.target.type === 'range') syncRangeFill(e.target);
+});
+// 初始状态同步
+applyColor(state.color, { noWheel: false });
+applyBgColor(state.bgColor);
+updateDocTab();
+rulers.resize();
 // 启动先进首页（显示最近文件 / 新建 / 预设）；?nohome=1 可跳过（用于截图/调试）
 if (!/[?&]nohome=1/.test(location.search)) homeApi.show();
 
@@ -2155,6 +2528,7 @@ window.__lbsh = {
   setTool, updateOptionsBar,
   selectAll, deselect, invertSelection, featherSelection,
   copySelection, pasteClipboard, clearSelectionContent, fillSelection,
+  dock, rulers, applyColor, updateDocTab, zoom100, updateStatus, renderLayerPanel, refreshHistoryPanel,
   get dirty() { return dirty; },
   get projectName() { return currentProjectName; },
 };

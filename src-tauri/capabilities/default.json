@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "落笔生花默认权限：原生保存对话框 + 读写用户选择的文件 + 拖拽文件读取",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "dialog:default",
@@ -10,7 +12,19 @@
     "fs:allow-write-file",
     {
       "identifier": "fs:scope",
-      "allow": [{ "path": "$HOME/**" }, { "path": "/tmp/**" }, { "path": "/private/tmp/**" }]
-    }
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
+        }
+      ]
+    },
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize"
   ]
 }

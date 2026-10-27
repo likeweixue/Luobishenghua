@@ -1,0 +1,68 @@
+# 技术栈评估：HTML/CSS/JS 适合做「落笔生花」吗？
+
+先给结论：
+
+1. **Photoshop 桌面版不是 HTML/CSS/JS 做的。** 它的核心是 C++（图像合成、色彩管理、文件格式、GPU、插件），界面是原生框架；只有扩展面板 / 脚本层使用 JavaScript（UXP / ExtendScript）。CSP 同样以 C++ 核心 + 原生界面为主。
+2. **HTML/CSS/JS 做 UI 完全没问题，而且很适合你现在的阶段。** 你的界面、面板、对话框、快捷键、主题，用 Web 技术迭代速度远快于原生 UI。
+3. **决定绘画软件上限的不是 CSS/HTML，而是渲染与笔刷管线。** 目前项目用 Canvas 2D + JS 做合成，配合 Tauri 2 的 Rust 壳，是一个合理的起步架构；要往专业级走，下一步应该把「合成 / 笔刷铺排 / 大图缩放」迁到 GPU（WebGL2 / WebGPU），把重活交给 WASM 或 Rust。
+4. 如果目标是「专业绘画工具」而不是「PS 克隆」，**HTML/CSS/JS + Tauri + WebGPU/WASM** 是一条现实且成本可控的路线。如果目标是和 PS 正面竞争，最终仍然需要一个 C++/Rust 的像素核心。
+
+---
+
+## 1. Photoshop / CSP 实际用什么
+
+| 层 | Photoshop | Clip Studio Paint | 落笔生花（当前） |
+|---|---|---|---|
+| 画布 / 合成 | C++ + GPU | C++ + GPU | Canvas 2D（JS） |
+| 笔刷引擎 | C++，原生 SIMD/GPU | C++ | JS + Canvas（印章铺排） |
+| 文件格式 | C++（PSD/PSB/TIFF…） | C++ | JS（PSD / ABR / ZIP） |
+| 界面 | 原生（macOS AppKit / Windows 自绘） | 原生 | HTML/CSS |
+| 扩展 / 脚本 | UXP（JS） | 原生插件 | 无 |
+| 壳 | 原生 | 原生 | Tauri 2（Rust + WebView） |
+
+所以「Adobe 就是这个技术栈」这个说法只对了一小半：Adobe 的 **Web 版 Photoshop / Express** 是 Web 技术；**桌面版 Photoshop** 不是。你的项目更接近「Web 技术做界面 + 自绘引擎」的 Affinity / Figma 路线，而不是 Adobe 桌面版的路线。
+
+## 2. 当前技术栈的优点
+
+- **零构建、零依赖**：直接 `index.html` + ES Module，调试和部署都简单。
+- **UI 迭代快**：这次 beta12 能在一天内重排成 PS 工作台，就是 Web 技术的优势。
+- **跨平台**：Tauri 2 同时出 macOS / Windows，安装包小，原生文件对话框 / 拖拽都能接。
+- **Canvas 2D 够用**：瓦片存储 + 脏矩形 + 上下层缓存，已经把「大画布 / 多图层」的内存问题解决得不错。
+- **PSD / ABR 生态**：用 JS 直接解析，方便快速试错。
+
+## 3. 瓶颈在哪里
+
+按优先级：
+
+1. **合成与缩放**：Canvas 2D 的 `drawImage` 每次全屏重绘在 4K/8K 画布上会很吃力；缩放时的重采样质量与速度也受限。需要 GPU 合成（WebGL2 纹理 / WebGPU render pass）。
+2. **笔刷铺排**：现在每落一个印章都走 2D canvas 绘制 + 读回；高密度笔刷、大笔尖、低间距时会掉帧。可以把印章批处理成顶点/实例，用 WebGL/WebGPU 一次画完。
+3. **主线程**：PSD 解析、ZIP、缩略图、自动保存都在主线程；大文件会卡 UI。需要 Worker / OffscreenCanvas / Rust 端处理。
+4. **色彩管理**：只有 sRGB 8 位；专业印刷 / HDR 需要 ICC、16 位、线性空间。
+5. **UI 工程化**：目前 JS 约 8.8k 行、无 TypeScript、无组件化；继续长大后面板/菜单/状态会互相缠绕。建议逐步 TS + 轻量状态管理，不需要上 React。
+
+## 4. 推荐演进路线
+
+### 短期（保持现在的架构）
+
+- 继续用 HTML/CSS/JS + Tauri；把 UI 组件（菜单、面板、滑块、拾色器）抽成可复用的小模块。
+- 引入 **TypeScript**（或至少 JSDoc + `checkJs`）和 **Vite**；保留 `app/` 静态结构，开发时用 Vite HMR。
+- 把 PSD / ABR / ZIP / 自动保存放进 **Web Worker**；缩略图用 OffscreenCanvas。
+- 加入 Playwright / Vitest，先把「打开 PSD → 画一笔 → 撤销 → 保存」做成端到端测试。
+
+### 中期（性能分水岭）
+
+- 合成器改为 **WebGL2**（兼容性最好）或 **WebGPU**（新设备优先），Canvas 2D 作为 fallback。
+- 笔刷印章改为 GPU 实例化/批绘制；瓦片作为纹理图集（atlas），避免每帧上传。
+- 视图变换（缩放/旋转/平移）直接在 GPU 上做矩阵变换，标尺/选区用叠加层。
+- 重计算（色彩转换、滤镜、液化）用 **WASM（Rust/C++）**，通过 Tauri 或 wasm-bindgen 调用。
+- 文件读写、原生菜单、崩溃恢复可以逐步移到 Rust 端，前端只拿结果。
+
+### 长期（如果真的要对标 PS）
+
+- 像素核心用 **Rust 或 C++**（SIMD + GPU），Web 前端只负责 UI 与交互。
+- 图层/历史用不可变数据 + 增量快照；支持 16 位、ICC、智能对象、滤镜图。
+- 建立笔刷/材质/工作区生态，而不只是「像 PS 的界面」。
+
+## 5. 一句话建议
+
+**不要换掉 HTML/CSS/JS，也不要把「像 PS」误解成「必须用 Adobe 的技术」。** 当前最值得投入的是：把 Canvas 2D 合成升级到 WebGL2/WebGPU、把重活移出主线程、把 UI 工程化。界面这次已经跨过「像 PS」的门槛；下一阶段的瓶颈在引擎，不在 CSS。

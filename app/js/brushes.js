@@ -241,8 +241,8 @@ export function drawDab(ctx, id, color, x, y, size, alpha, jitter) {
   ctx.restore();
 }
 
-// 生成笔刷预览缩略图（黑尖白底）
-export function brushThumbnail(brush, w = 44, h = 30) {
+// 生成笔刷预览缩略图（默认黑尖白底，可指定颜色）
+export function brushThumbnail(brush, w = 44, h = 30, color = '#222222') {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
@@ -250,8 +250,8 @@ export function brushThumbnail(brush, w = 44, h = 30) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, w, h);
   const stamp = brush.custom
-    ? tintStamp(brush.alphaCanvas, '#222222')
-    : brush.makeStamp('#222222');
+    ? tintStamp(brush.alphaCanvas, color)
+    : brush.makeStamp(color);
   const k = Math.min((w - 6) / stamp.width, (h - 6) / stamp.height);
   const dw = stamp.width * k;
   const dh = stamp.height * k;

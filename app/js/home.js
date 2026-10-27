@@ -1,4 +1,5 @@
 // 首页 / 欢迎页：新建预设、打开文件、最近文件
+import { icon } from './icons.js';
 
 const RECENT_KEY = 'lbsh-recents';
 const MAX_RECENTS = 8;
@@ -112,7 +113,7 @@ export function renderRecents(onOpenRecent) {
 
     const ico = document.createElement('span');
     ico.className = 'rico';
-    ico.textContent = '📄';
+    ico.innerHTML = icon('doc');
 
     const meta = document.createElement('span');
     meta.className = 'rmeta';

@@ -15,6 +15,7 @@ export class Engine {
     this.view = { scale: 1, rotation: 0, tx: 0, ty: 0 };
     this.dpr = window.devicePixelRatio || 1;
     this.onRender = null; // 渲染后回调（导航器等）
+    this._renderListeners = new Set();
     this.selection = null;   // 选区（绘制蚂蚁线）
     this.transform = null;   // 自由变换浮动层
     this.previewPath = null; // 选区拖拽预览路径
@@ -136,7 +137,7 @@ export class Engine {
     }
     const p = this._paper.getContext('2d');
     p.setTransform(1, 0, 0, 1, 0, 0);
-    p.fillStyle = '#1e1e1e';
+    p.fillStyle = '#2b2b2b';
     p.fillRect(0, 0, this._paper.width, this._paper.height);
 
     const v = this.view;
@@ -285,12 +286,25 @@ export class Engine {
     ctx.restore();
   }
 
+  // 注册渲染监听（可多个：导航器、标尺等）
+  addRenderListener(fn) {
+    this._renderListeners.add(fn);
+    return () => this._renderListeners.delete(fn);
+  }
+
+  _fireRender() {
+    if (this.onRender) this.onRender();
+    for (const fn of this._renderListeners) {
+      try { fn(); } catch (err) { console.warn('[render]', err); }
+    }
+  }
+
   /**
    * 渲染。传入 rect（世界坐标）时只更新脏区。
    */
   render(rect = null) {
     if (!this.canvas.width || !this.canvas.height) {
-      if (this.onRender) this.onRender();
+      this._fireRender();
       return;
     }
     const paperWasDirty = this._paperDirty || !this._paper;
@@ -304,13 +318,13 @@ export class Engine {
     this._paintScreen(clip);
 
     this._paintOverlays();
-    if (this.onRender) this.onRender();
+    this._fireRender();
   }
 
   // 只重绘屏幕（不重新合成图层）：平移/缩放/旋转时用
   renderViewOnly() {
     if (!this.canvas.width || !this.canvas.height) {
-      if (this.onRender) this.onRender();
+      this._fireRender();
       return;
     }
     if (!this._docValid) {
@@ -320,7 +334,7 @@ export class Engine {
     if (this._paperDirty || !this._paper) this._buildPaper();
     this._paintScreen(null);
     this._paintOverlays();
-    if (this.onRender) this.onRender();
+    this._fireRender();
   }
 
   _paintOverlays() {

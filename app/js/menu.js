@@ -1,4 +1,15 @@
-// 菜单栏 + 模态对话框（PS 风格：落笔生花/文件/编辑/视图/窗口/设置/帮助）
+// 菜单栏 + 模态对话框 + 通用弹出菜单（PS 风格）
+import { icon } from './icons.js';
+
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+function fmtShortcut(sc) {
+  if (!sc) return '';
+  if (IS_MAC) return sc;
+  return sc.replace(/⌘/g, 'Ctrl+').replace(/⇧/g, 'Shift+').replace(/⌥/g, 'Alt+');
+}
+
+/* ---------------- 模态对话框 ---------------- */
 
 export function showModal(title, bodyHTML, onMount) {
   const overlay = document.getElementById('modal-overlay');
@@ -13,13 +24,123 @@ export function showModal(title, bodyHTML, onMount) {
 }
 
 export function hideModal() {
+  const modal = document.getElementById('modal');
+  if (modal) modal.classList.remove('color-picker-modal');
   document.getElementById('modal-overlay').classList.add('hidden');
+}
+
+/* ---------------- 通用弹出菜单 ---------------- */
+
+let activeMenu = null;
+
+export function closeMenus() {
+  if (activeMenu) {
+    const a = activeMenu;
+    activeMenu = null;
+    a.cleanup();
+  }
+}
+
+/**
+ * 在锚点元素下方弹出菜单。
+ * items: [{ label, shortcut, checked, disabled, icon, action, sep }]
+ */
+export function showMenuAt(anchor, items, opts = {}) {
+  closeMenus();
+  const layer = document.getElementById('menu-layer');
+  const dd = document.createElement('div');
+  dd.className = 'menu-dropdown';
+  if (opts.className) dd.className += ' ' + opts.className;
+
+  for (const item of items) {
+    if (!item) continue;
+    if (item.sep) {
+      const s = document.createElement('div');
+      s.className = 'menu-sep';
+      dd.appendChild(s);
+      continue;
+    }
+    const row = document.createElement('div');
+    row.className = 'menu-row' + (item.disabled ? ' disabled' : '');
+    const lead = document.createElement('span');
+    lead.className = 'menu-check';
+    if (item.checked) lead.textContent = '✓';
+    else if (item.icon) lead.innerHTML = icon(item.icon);
+    const label = document.createElement('span');
+    label.className = 'menu-label';
+    label.textContent = item.label;
+    const sc = document.createElement('span');
+    sc.className = 'menu-shortcut';
+    sc.textContent = fmtShortcut(item.shortcut);
+    row.append(lead, label, sc);
+    if (!item.disabled) {
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeMenus();
+        if (typeof item.action === 'function') item.action();
+      });
+    }
+    dd.appendChild(row);
+  }
+
+  layer.appendChild(dd);
+
+  // 定位
+  const ar = anchor.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const w = dd.offsetWidth;
+  const h = dd.offsetHeight;
+  let left = opts.align === 'left' ? ar.left : ar.right - w;
+  if (opts.align === 'center') left = ar.left + ar.width / 2 - w / 2;
+  let top = ar.bottom + 2;
+  if (left < 6) left = 6;
+  if (left + w > vw - 6) left = vw - w - 6;
+  if (top + h > vh - 6) {
+    top = ar.top - h - 2;
+    if (top < 6) top = Math.max(6, vh - h - 6);
+  }
+  dd.style.left = Math.round(left) + 'px';
+  dd.style.top = Math.round(top) + 'px';
+
+  const onDown = (e) => {
+    if (!dd.contains(e.target) && !anchor.contains(e.target)) closeMenus();
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMenus();
+    }
+  };
+  const onBlur = () => closeMenus();
+  const onResize = () => closeMenus();
+  setTimeout(() => {
+    document.addEventListener('pointerdown', onDown, true);
+  }, 0);
+  window.addEventListener('keydown', onKey, true);
+  window.addEventListener('blur', onBlur);
+  window.addEventListener('resize', onResize);
+
+  activeMenu = {
+    dd,
+    anchor,
+    cleanup() {
+      document.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('resize', onResize);
+      dd.remove();
+      anchor.classList?.remove('open');
+    },
+  };
+  return activeMenu;
 }
 
 /* ---------------- 菜单栏 ---------------- */
 
 export function initMenuBar(actions) {
   const bar = document.getElementById('menubar');
+  const container = document.getElementById('menu-items') || bar;
   let openMenu = null;
 
   const menus = [
@@ -27,6 +148,10 @@ export function initMenuBar(actions) {
       label: '落笔生花', bold: true,
       items: [
         { label: '关于落笔生花', action: 'about' },
+        { sep: true },
+        { label: '偏好设置…', shortcut: '⌘,', action: 'settings' },
+        { sep: true },
+        { label: '快捷键一览', action: 'shortcuts' },
       ],
     },
     {
@@ -101,10 +226,13 @@ export function initMenuBar(actions) {
     },
     {
       label: '视图',
-      items: [
-        { label: '放大', shortcut: '+', action: 'zoomIn' },
-        { label: '缩小', shortcut: '-', action: 'zoomOut' },
-        { label: '复位视图', shortcut: '0', action: 'resetView' },
+      dynamic: () => [
+        { label: '放大', shortcut: '⌘+', action: 'zoomIn' },
+        { label: '缩小', shortcut: '⌘-', action: 'zoomOut' },
+        { label: '适合屏幕', shortcut: '⌘0', action: 'resetView' },
+        { label: '实际像素', shortcut: '⌘1', action: 'zoom100' },
+        { sep: true },
+        { label: '标尺', checked: actions.rulersOn ? actions.rulersOn() : false, action: 'toggleRulers' },
         { sep: true },
         { label: '逆时针旋转 15°', action: 'rotateLeft' },
         { label: '顺时针旋转 15°', action: 'rotateRight' },
@@ -114,31 +242,29 @@ export function initMenuBar(actions) {
       label: '窗口',
       dynamic: () => [
         ...actions.panelList().map(p => ({
-          label: p.name + ' 面板',
+          label: p.name,
           checked: p.visible,
           action: () => actions.togglePanel(p.id),
         })),
         { sep: true },
-        { label: '重置面板布局', action: 'resetLayout' },
-      ],
-    },
-    {
-      label: '设置',
-      items: [
-        { label: '偏好设置…', action: 'settings' },
+        { label: '工具栏', checked: actions.toolbarVisible ? actions.toolbarVisible() : true, action: 'toggleToolbar' },
+        { label: '显示 / 隐藏面板', shortcut: 'Tab', action: 'togglePanels' },
+        { sep: true },
+        { label: '重置工作区', action: 'resetLayout' },
       ],
     },
     {
       label: '帮助',
       items: [
         { label: '快捷键一览', action: 'shortcuts' },
+        { label: '关于落笔生花', action: 'about' },
       ],
     },
   ];
 
   function closeAll() {
-    bar.querySelectorAll('.menu-dropdown').forEach(d => d.remove());
-    bar.querySelectorAll('.menu-item').forEach(m => m.classList.remove('open'));
+    closeMenus();
+    container.querySelectorAll('.menu-item').forEach(m => m.classList.remove('open'));
     openMenu = null;
   }
 
@@ -146,36 +272,14 @@ export function initMenuBar(actions) {
     closeAll();
     anchorEl.classList.add('open');
     const items = menu.dynamic ? menu.dynamic() : menu.items;
-    const dd = document.createElement('div');
-    dd.className = 'menu-dropdown';
-    dd.style.left = anchorEl.offsetLeft + 'px';
-    for (const item of items) {
-      if (item.sep) {
-        const s = document.createElement('div');
-        s.className = 'menu-sep';
-        dd.appendChild(s);
-        continue;
-      }
-      const row = document.createElement('div');
-      row.className = 'menu-row';
-      const check = document.createElement('span');
-      check.className = 'menu-check';
-      check.textContent = item.checked ? '✓' : '';
-      const label = document.createElement('span');
-      label.className = 'menu-label';
-      label.textContent = item.label;
-      const sc = document.createElement('span');
-      sc.className = 'menu-shortcut';
-      sc.textContent = item.shortcut || '';
-      row.append(check, label, sc);
-      row.addEventListener('click', () => {
-        closeAll();
-        if (typeof item.action === 'function') item.action();
-        else if (actions[item.action]) actions[item.action]();
-      });
-      dd.appendChild(row);
-    }
-    bar.appendChild(dd);
+    showMenuAt(anchorEl, items, { align: 'left' });
+    const instance = activeMenu;
+    const oldCleanup = instance.cleanup;
+    instance.cleanup = () => {
+      oldCleanup();
+      anchorEl.classList.remove('open');
+      if (openMenu === menu) openMenu = null;
+    };
     openMenu = menu;
   }
 
@@ -183,18 +287,19 @@ export function initMenuBar(actions) {
     const el = document.createElement('div');
     el.className = 'menu-item' + (menu.bold ? ' bold' : '');
     el.textContent = menu.label;
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
       if (openMenu === menu) closeAll();
       else openDropdown(menu, el);
     });
     el.addEventListener('pointerenter', () => {
       if (openMenu && openMenu !== menu) openDropdown(menu, el);
     });
-    bar.appendChild(el);
+    container.appendChild(el);
   }
 
   document.addEventListener('pointerdown', (e) => {
-    if (openMenu && !bar.contains(e.target)) closeAll();
+    if (openMenu && !bar.contains(e.target) && !e.target.closest('.menu-dropdown')) closeAll();
   });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { closeAll(); hideModal(); }
@@ -207,8 +312,8 @@ export function aboutDialog() {
   showModal('关于落笔生花', `
     <div class="about">
       <div class="about-name">落笔生花</div>
-      <div class="about-en">Luobishenghua · beta11</div>
-      <p>一款正在生长的绘画软件。</p>
+      <div class="about-en">LUOBISHENGHUA · beta12 · Photoshop 风格工作台</div>
+      <p>一款正在生长的专业绘画软件。</p>
       <p>瓦片化图层存储（大画布 / 多图层）· 压感笔刷引擎<br>图层组 / 蒙版 / 剪贴蒙版 · 选区 / 自由变换<br>涂抹 · 油漆桶 · 渐变 · 吸管 · 可调压感曲线与倾斜<br>PSD 分层互通 · .abr 笔刷生态 · 原生工程 .lbsh<br>增量撤销 · 自动保存与崩溃恢复 · 全部为手写零依赖实现</p>
       <p class="about-credit">开发：WorkBuddy × likeweixue</p>
     </div>`);
@@ -218,7 +323,7 @@ export function shortcutsDialog() {
   showModal('快捷键一览', `
     <table class="kbd-table">
       <tr><td><kbd>B</kbd> / <kbd>E</kbd> / <kbd>H</kbd></td><td>画笔 / 橡皮 / 抓手</td></tr>
-      <tr><td><kbd>S</kbd> / <kbd>G</kbd> / <kbd>⇧G</kbd> / <kbd>I</kbd></td><td>涂抹 / 油漆桶 / 渐变 / 吸管</td></tr>
+      <tr><td><kbd>S</kbd> / <kbd>G</kbd> / <kbd>⇧G</kbd> / <kbd>I</kbd> / <kbd>Z</kbd></td><td>涂抹 / 油漆桶 / 渐变 / 吸管 / 缩放</td></tr>
       <tr><td><kbd>Alt</kbd> + 点击</td><td>画笔/橡皮/涂抹时临时吸管取色</td></tr>
       <tr><td><kbd>V</kbd> / <kbd>M</kbd> / <kbd>⇧M</kbd></td><td>移动 / 矩形选框 / 椭圆选框</td></tr>
       <tr><td><kbd>L</kbd> / <kbd>⇧L</kbd></td><td>套索 / 多边形套索（双击或 Enter 闭合）</td></tr>
@@ -227,16 +332,16 @@ export function shortcutsDialog() {
       <tr><td><kbd>⌘C</kbd> / <kbd>⌘X</kbd> / <kbd>⌘V</kbd></td><td>复制 / 剪切 / 粘贴为新图层</td></tr>
       <tr><td><kbd>Delete</kbd> / <kbd>⇧F5</kbd></td><td>清除选区内容 / 填充前景色</td></tr>
       <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>笔刷减小 / 增大</td></tr>
+      <tr><td><kbd>X</kbd> / <kbd>D</kbd></td><td>交换前景/背景色 / 恢复默认黑白</td></tr>
+      <tr><td><kbd>F5</kbd></td><td>打开 / 关闭画笔设置</td></tr>
+      <tr><td><kbd>Tab</kbd></td><td>显示 / 隐藏全部面板</td></tr>
+      <tr><td><kbd>⌘0</kbd> / <kbd>⌘1</kbd></td><td>适合屏幕 / 实际像素</td></tr>
       <tr><td><kbd>⌘Z</kbd> / <kbd>⇧⌘Z</kbd></td><td>撤销 / 重做</td></tr>
-      <tr><td><kbd>⌘N</kbd></td><td>新建文档</td></tr>
-      <tr><td><kbd>⌘O</kbd></td><td>打开工程（.lbsh）</td></tr>
-      <tr><td><kbd>⌘S</kbd> / <kbd>⇧⌘S</kbd></td><td>保存工程 / 另存为</td></tr>
-      <tr><td><kbd>0</kbd></td><td>复位视图</td></tr>
+      <tr><td><kbd>⌘N</kbd> / <kbd>⌘O</kbd> / <kbd>⌘S</kbd></td><td>新建 / 打开工程 / 保存工程</td></tr>
       <tr><td><kbd>空格</kbd> + 拖动</td><td>平移画布</td></tr>
-      <tr><td>双指滚动</td><td>平移画布</td></tr>
-      <tr><td>捏合 / ⌃滚轮</td><td>缩放画布</td></tr>
-      <tr><td>双击面板标题</td><td>折叠 / 展开面板</td></tr>
-      <tr><td>拖动面板到边缘</td><td>磁吸停靠</td></tr>
+      <tr><td>双指滚动 / 捏合</td><td>平移画布 / 缩放画布</td></tr>
+      <tr><td>右键工具按钮</td><td>展开同组工具</td></tr>
+      <tr><td>拖动面板分隔条</td><td>调整面板高度 / 宽度</td></tr>
     </table>`);
 }
 
