@@ -193,17 +193,28 @@ async function run() {
         returnByValue: true,
       });
       await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: ex, y: ey, button: 'left', buttons: 0, clickCount: 1 });
-      await sleep(450);
+      for (let i = 0; i < 50; i++) {
+        const busy = await send('Runtime.evaluate', {
+          expression: "!!(window.__lbsh && window.__lbsh.state && window.__lbsh.state.brushCommitPending)",
+          returnByValue: true,
+        });
+        if (!busy.result?.value) break;
+        await sleep(100);
+      }
+      await sleep(150);
       const after = await send('Runtime.evaluate', {
         expression: `(() => {
           const l = __lbsh.layers.active;
           const h = __lbsh.history;
+          const p = __lbsh.engine.screenToWorld(${sx} - ${r.x}, ${sy} - ${r.y});
           return {
             gpuStroke: !!__lbsh.state.gpuStroke,
             preview: !!__lbsh.engine.gpu.brushPreview,
             tiles: l ? [...l.surface.tiles.values()].length : 0,
+            color: l ? l.surface.colorAt(p.x, p.y) : null,
             undo: h.undoStack.length,
             redo: h.redoStack.length,
+            mode: __lbsh.state.brushCommitMode,
             gpu: document.getElementById('status-gpu')?.textContent || '',
           };
         })()`,
@@ -226,7 +237,8 @@ async function run() {
       const u = undo.result?.value || {};
       e2eDetail = JSON.stringify({ mid: m, after: a, undo: u });
       e2eOk = m.gpuStroke && m.dabs > 0 && m.preview && m.drawing
-        && !a.gpuStroke && !a.preview && a.tiles > 0 && a.undo >= 1 && a.gpu === 'GPU'
+        && !a.gpuStroke && !a.preview && a.tiles > 0 && a.color && a.color !== '#ffffff'
+        && a.undo >= 1 && a.gpu === 'GPU' && a.mode === 'worker'
         && u.before >= 1 && u.undone === u.before - 1 && u.redoAfterUndo >= 1 && u.afterRedo === u.before;
     } catch (err) {
       e2eDetail = String(err && err.message || err);

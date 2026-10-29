@@ -2,6 +2,27 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta20（2026-10-29）
+
+OffscreenCanvas + Worker 抬笔提交。
+
+笔刷：
+- 新增 `app/js/brush-worker.js`：按瓦片接收 ImageBitmap + dab 列表，在
+  OffscreenCanvas 里批量绘制，返回 ImageData（transfer 回主线程）
+- 主线程 `startGpuStrokeCommit`：before 快照仍在主线程，之后把受影响瓦片的
+  ImageBitmap、stamp、dab 发给 Worker；结果写回瓦片并 commitStroke
+- GPU 预览在 Worker 提交期间保持，提交完成后才清预览 / 重绘，避免闪白
+- `brushCommitPending` 期间短暂阻止新建笔画、撤销 / 重做；worker 失败 / 超时
+  自动回退主线程同步提交；不支持 Worker / OffscreenCanvas 的环境同样回退
+- Tauri WKWebView 若不支持 OffscreenCanvas，会自动走原路径，语义不变
+
+测试：
+- app-e2e 断言 Worker 模式 `mode:"worker"`、提交后目标点颜色 #222222、
+  瓦片数、历史 +1、撤销 / 重做
+- 8 个页面 / 279 项 + app-e2e 全部通过；CI Browser tests 仍作为构建门禁
+- 版本、README、CHANGELOG、TECH_STACK、截图更新到 beta20
+- TypeScript 迁移是后续工作
+
 ## beta19（2026-10-29）
 
 应用级端到端回归。

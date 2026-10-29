@@ -67,6 +67,8 @@ const state = {
   smoothPoint: null,     // 防抖平滑后的位置
   drawing: false,
   gpuStroke: null,        // GPU 笔刷预览会话：{ layerId, type, color, stamp, dabs }
+  brushCommitPending: false, // Worker 抬笔提交进行中：短暂阻止新建笔画 / 撤销
+  brushCommitMode: '',       // 'worker' | 'main'（测试/诊断用）
   panning: false,
   spaceDown: false,
   last: null,
@@ -694,6 +696,20 @@ function renderLayerPanel() {
   dock.reflowBoth();
 }
 
+function undoNow() {
+  if (state.brushCommitPending) return;
+  history.undo();
+  refreshThumbs();
+  updateStatus();
+}
+
+function redoNow() {
+  if (state.brushCommitPending) return;
+  history.redo();
+  refreshThumbs();
+  updateStatus();
+}
+
 function refreshThumbs() {
   for (const thumb of layerListEl.querySelectorAll('canvas.thumb[data-layer-id]')) {
     const l = layers.byId(+thumb.dataset.layerId);
@@ -896,8 +912,8 @@ history.onChange = () => {
   if (btnU) btnU.disabled = !history.canUndo;
   if (btnR) btnR.disabled = !history.canRedo;
 };
-document.getElementById('btn-hist-undo').addEventListener('click', () => { history.undo(); refreshThumbs(); updateStatus(); });
-document.getElementById('btn-hist-redo').addEventListener('click', () => { history.redo(); refreshThumbs(); updateStatus(); });
+document.getElementById('btn-hist-undo').addEventListener('click', undoNow);
+document.getElementById('btn-hist-redo').addEventListener('click', redoNow);
 
 /* ---------------- 工程文件（.lbsh） ---------------- */
 
@@ -1110,8 +1126,8 @@ function updateStatus() {
   updateDocTab();
 }
 
-document.getElementById('btn-undo').addEventListener('click', () => { history.undo(); refreshThumbs(); updateStatus(); });
-document.getElementById('btn-redo').addEventListener('click', () => { history.redo(); refreshThumbs(); updateStatus(); });
+document.getElementById('btn-undo').addEventListener('click', undoNow);
+document.getElementById('btn-redo').addEventListener('click', redoNow);
 function clearActiveLayer() {
   const l = layers.active;
   if (!l) return;
@@ -1508,8 +1524,8 @@ initMenuBar({
   exportPNG: doExportPNG,
   exportPSD: doExportPSD,
   importABR: () => document.getElementById('file-abr').click(),
-  undo: () => { history.undo(); refreshThumbs(); updateStatus(); },
-  redo: () => { history.redo(); refreshThumbs(); updateStatus(); },
+  undo: undoNow,
+  redo: redoNow,
   clearLayer: () => clearSelectionContent(true),
   selectAll, deselect, invertSelection, featherSelection, freeTransform: startFreeTransform,
   copy: copySelection, cut: cutSelection, paste: pasteClipboard, fill: fillSelection,
@@ -1798,30 +1814,155 @@ function continueStroke(e) {
   scheduleStrokeRender();
 }
 
-// 抬笔时把预览的 dab 一次性提交到瓦片；before 快照也在提交前统一捕获
-function commitGpuStroke() {
-  const gs = state.gpuStroke;
-  if (!gs) return false;
+/* ---------------- GPU 笔画提交：主线程同步 / Worker 异步 ---------------- */
+
+let brushWorker = null;
+let brushWorkerUnavailable = false;
+let brushSeq = 0;
+const brushPending = new Map();
+
+function canUseBrushWorker() {
+  if (brushWorkerUnavailable) return false;
+  return typeof Worker !== 'undefined'
+    && typeof OffscreenCanvas !== 'undefined'
+    && typeof createImageBitmap === 'function'
+    && typeof ImageData !== 'undefined';
+}
+
+function getBrushWorker() {
+  if (brushWorker) return brushWorker;
+  if (!canUseBrushWorker()) return null;
+  try {
+    brushWorker = new Worker(new URL('./brush-worker.js', import.meta.url));
+    brushWorker.onmessage = (ev) => {
+      const { id, results } = ev.data || {};
+      const p = brushPending.get(id);
+      if (!p) return;
+      brushPending.delete(id);
+      p.resolve(results || []);
+    };
+    brushWorker.onerror = (err) => {
+      brushWorkerUnavailable = true;
+      for (const p of brushPending.values()) p.reject(err);
+      brushPending.clear();
+      try { brushWorker.terminate(); } catch { /* ignore */ }
+      brushWorker = null;
+    };
+  } catch {
+    brushWorkerUnavailable = true;
+    brushWorker = null;
+  }
+  return brushWorker;
+}
+
+function captureGpuStrokeBefore(gs) {
+  if (!state.journal) return;
+  for (const d of gs.dabs) state.journal.captureBefore(d.x, d.y, d.size / 2 + 2);
+}
+
+function applyGpuStrokeSync(gs) {
   const l = layers.byId(gs.layerId);
-  if (!l || l.type !== 'layer') {
-    engine.clearBrushPreview();
-    state.gpuStroke = null;
-    return false;
-  }
-  if (state.journal) {
-    for (const d of gs.dabs) state.journal.captureBefore(d.x, d.y, d.size / 2 + 2);
-  }
+  if (!l || l.type !== 'layer') return;
   for (const d of gs.dabs) {
     l.surface.stamp(d.x, d.y, d.size / 2 + 1, (ctx) => {
       drawDabAt(ctx, gs.type, gs.color, d.x, d.y, d.size, d.alpha);
     });
   }
-  engine.clearBrushPreview();
-  state.gpuStroke = null;
+}
+
+async function commitGpuStrokeViaWorker(gs, l) {
+  const before = state.journal ? state.journal.before : null;
+  if (!before || !before.size) return false;
+  const worker = getBrushWorker();
+  if (!worker) return false;
+  const stamp = await createImageBitmap(gs.stamp);
+  const tiles = [];
+  for (const b of before.values()) {
+    const t = l.surface.getTile(b.tx, b.ty, false);
+    const bmp = t ? await createImageBitmap(t.canvas) : null;
+    const r = l.surface.tileRect(b.tx, b.ty);
+    tiles.push({ tx: b.tx, ty: b.ty, x: r.x, y: r.y, w: r.w, h: r.h, bmp });
+  }
+  const id = ++brushSeq;
+  let results;
+  try {
+    results = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        brushPending.delete(id);
+        reject(new Error('brush worker timeout'));
+      }, 8000);
+      brushPending.set(id, {
+        resolve: (r) => { clearTimeout(timer); resolve(r); },
+        reject: (e) => { clearTimeout(timer); reject(e); },
+      });
+      worker.postMessage(
+        { id, stamp, tiles, dabs: gs.dabs },
+        [stamp, ...tiles.filter(t => t.bmp).map(t => t.bmp)],
+      );
+    });
+  } catch (err) {
+    try { brushWorkerUnavailable = true; } catch { /* ignore */ }
+    throw err;
+  }
+  for (const r of results) {
+    const t = l.surface.getTile(r.tx, r.ty, true);
+    if (!t) continue;
+    t.ctx.putImageData(new ImageData(new Uint8ClampedArray(r.data), r.w, r.h), 0, 0);
+    t.rev = (t.rev || 0) + 1;
+  }
+  l.surface._bbox = null;
   return true;
 }
 
-/* ---------------- 油漆桶 / 渐变 / 涂抹 / 吸管 ---------------- */
+function finalizeGpuStrokeCommit(label) {
+  engine.clearBrushPreview();
+  flushStrokeRender();
+  if (state.journal) {
+    history.commitStroke(state.journal, label);
+    state.journal = null;
+  }
+  state.gpuStroke = null;
+  state.brushCommitPending = false;
+  refreshThumbs();
+  updateStatus();
+}
+
+function startGpuStrokeCommit() {
+  const gs = state.gpuStroke;
+  if (!gs) return;
+  const l = layers.byId(gs.layerId);
+  const toolName = BrushRegistry.get(gs.type)?.name || '画笔';
+  const label = `${toolName} ${state.size}px`;
+  if (!l || l.type !== 'layer') {
+    engine.clearBrushPreview();
+    state.gpuStroke = null;
+    if (state.journal) { state.journal = null; }
+    state.brushCommitPending = false;
+    return;
+  }
+  captureGpuStrokeBefore(gs);
+  if (canUseBrushWorker()) {
+    state.brushCommitMode = 'worker';
+    state.brushCommitPending = true;
+    commitGpuStrokeViaWorker(gs, l)
+      .then((ok) => {
+        if (!ok) applyGpuStrokeSync(gs);
+        finalizeGpuStrokeCommit(label);
+      })
+      .catch((err) => {
+        console.warn('[brush worker] fallback to main thread', err);
+        state.brushCommitMode = 'main';
+        applyGpuStrokeSync(gs);
+        finalizeGpuStrokeCommit(label);
+      });
+  } else {
+    state.brushCommitMode = 'main';
+    applyGpuStrokeSync(gs);
+    finalizeGpuStrokeCommit(label);
+  }
+}
+
+/* ---------------- 油漆桶 / 渐变 / 涂抹 / 吸管 ---------------- *//* ---------------- 油漆桶 / 渐变 / 涂抹 / 吸管 ---------------- */
 
 function selMask() {
   return selection.active ? selection.mask : null;
@@ -2300,6 +2441,7 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   if (e.button !== 0) return;
+  if (state.brushCommitPending) return;   // Worker 正在提交上一笔，短暂忽略新操作
 
   if (state.tool === 'zoom') {
     engine.zoomAt(e.offsetX, e.offsetY, e.altKey ? 0.8 : 1.25);
@@ -2394,7 +2536,12 @@ function endPointer(e) {
     state.drawing = false;
     state.last = null;
     state.smoothPoint = null;
-    if (state.gpuStroke) commitGpuStroke();
+    if (state.gpuStroke) {
+      state.smudgeSession = null;
+      startGpuStrokeCommit();
+      updateStatus();
+      return;
+    }
     flushStrokeRender();
     if (state.journal) {
       const toolName = state.tool === 'eraser' ? '橡皮擦' : (BrushRegistry.get(state.brush)?.name || '画笔');
@@ -2460,6 +2607,7 @@ window.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
     e.preventDefault();
     if (transform.active) return;  // 变换中不响应撤销
+    if (state.brushCommitPending) return;
     if (e.shiftKey) history.redo(); else history.undo();
     refreshThumbs();
     updateStatus();
