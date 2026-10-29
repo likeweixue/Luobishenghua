@@ -224,21 +224,26 @@ export function pressureAlpha(id, baseOpacity, pressure) {
   return Math.min(1, a);
 }
 
-export function drawDab(ctx, id, color, x, y, size, alpha, jitter) {
+// 在精确中心落一个笔尖（不带随机抖动）。GPU 笔刷预览与提交共用同一组中心。
+export function drawDabAt(ctx, id, color, x, y, size, alpha) {
   const stamp = getStamp(id, id === 'eraser' ? '#000000' : color);
+  ctx.save();
+  if (id === 'eraser') {
+    ctx.globalCompositeOperation = 'destination-out';
+  }
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(stamp, x - size / 2, y - size / 2, size, size);
+  ctx.restore();
+}
+
+export function drawDab(ctx, id, color, x, y, size, alpha, jitter) {
   let dx = x;
   let dy = y;
   if (jitter) {
     dx += (Math.random() - 0.5) * size * jitter;
     dy += (Math.random() - 0.5) * size * jitter;
   }
-  ctx.save();
-  if (id === 'eraser') {
-    ctx.globalCompositeOperation = 'destination-out';
-  }
-  ctx.globalAlpha = alpha;
-  ctx.drawImage(stamp, dx - size / 2, dy - size / 2, size, size);
-  ctx.restore();
+  drawDabAt(ctx, id, color, dx, dy, size, alpha);
 }
 
 // 生成笔刷预览缩略图（默认黑尖白底，可指定颜色）

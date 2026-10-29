@@ -2,6 +2,31 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta18（2026-10-29）
+
+GPU 笔刷预览 + 抬笔批量提交。
+
+笔刷：
+- 普通图层 + 正常混合 + 不透明度 100% + 无蒙版 / 剪贴 / 选区 / lockAlpha 时，
+  笔画不再逐笔写瓦片 / 逐笔 captureBefore / 逐笔 GPU 上传：
+  dab 先进入 GPU 预览队列，抬笔时一次性提交
+- GPU 预览：笔尖 stamp 纹理 + instanced draw，dab 画在目标图层内容之上、
+  上方图层之下；目标图层 opacity 必须为 1，保证 source-over 可结合
+- 抬笔提交：先统一 captureBefore，再按同一组 dab 中心 / 大小 / alpha 用
+  drawDabAt 写入瓦片，最后 commitStroke 记录一次增量撤销
+- 随机 scatter 在 dab 生成时固定，预览和提交共用同一中心；新增 drawDabAt
+- 不满足条件（复杂栈 / 橡皮 / 选区 / 蒙版 / lockAlpha / opacity<1 / 涂抹 /
+  GPU 关闭）自动走原逐笔路径，不改变语义
+
+测试 / 文档：
+- 新增 test-brush.html 11 项：目标层夹在底层与半透明上层之间逐点比对、
+  清除预览、opacity != 1 不启用预览
+- test-browser 扩展到 8 个页面 / 279 项；全部通过
+- 实测应用内：落笔中 GPU 预览可见、图层缩略图 / 历史保持旧状态；
+  抬笔后瓦片提交、历史 +1、撤销 / 重做正常
+- 版本、README、CHANGELOG、TECH_STACK、截图更新到 beta18
+- OffscreenCanvas + Worker、TypeScript 迁移仍是后续工作
+
 ## beta17（2026-10-28）
 
 自动化浏览器回归测试 + CI 门禁。

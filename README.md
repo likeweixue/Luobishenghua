@@ -1,10 +1,10 @@
 # 落笔生花 Luobishenghua
 
-一款面向绘画的桌面软件：瓦片化图层存储、压感笔刷引擎、PSD 分层互通、`.abr` 笔刷导入、原生工程 `.lbsh`。从 **beta12** 起采用 Photoshop 风格工作台，**beta13** 加入 WebGL2 合成，**beta14** 加入单列工具栏与可拖拽面板标签，**beta15** 把 GPU 合成扩展到组 / 蒙版 / 混合模式，**beta16** 用纹理数组 + instanced draw 把瓦片批量化，**beta17** 接入无头 Chrome 自动化回归测试。
+一款面向绘画的桌面软件：瓦片化图层存储、压感笔刷引擎、PSD 分层互通、`.abr` 笔刷导入、原生工程 `.lbsh`。从 **beta12** 起采用 Photoshop 风格工作台，**beta13** 加入 WebGL2 合成，**beta14** 加入单列工具栏与可拖拽面板标签，**beta15** 把 GPU 合成扩展到组 / 蒙版 / 混合模式，**beta16** 用纹理数组 + instanced draw 把瓦片批量化，**beta17** 接入无头 Chrome 自动化回归测试，**beta18** 加入 GPU 笔刷预览与抬笔批量提交。
 
 ![落笔生花工作台](docs/screenshot.png)
 
-> 当前版本：**beta17** · 平台：macOS / Windows（Tauri 2）
+> 当前版本：**beta18** · 平台：macOS / Windows（Tauri 2）
 >
 > 技术栈：HTML + CSS + JavaScript（无框架）+ Canvas 2D + Tauri 2（Rust 壳）
 >
@@ -24,7 +24,8 @@
 - **文件**：PSD 分层读写、PNG 导出、`.lbsh` 工程、自动保存、崩溃恢复、最近文件
 - **工作台**（beta12）：PS 式工具栏 / 选项栏 / 文档标签 / 标尺 / 面板坞 / 状态栏，可折叠与调整面板，浮动画笔面板，PS 风格拾色器
 - **面板坞**（beta14）：单列工具栏；标签可在颜色 / 图层 / 历史三个组之间拖拽重排、跨组停靠；浮动面板拖到标签栏即可并入；标签拖出画布即浮动；布局持久化
-- **GPU 合成**（beta13/15/16）：WebGL2 平铺图层渲染，平移 / 缩放 / 旋转不再每帧走 Canvas2D；beta15 支持图层组、图层 / 组蒙版、正片叠底 / 滤色 / 叠加 / 柔光 / 变暗 / 变亮 / 颜色减淡 / 线性减淡；剪贴蒙版 / 层级过深 / 超大瓦片自动回退；beta16 瓦片进 256×256 纹理数组，简单路径一次 instanced draw 画完，状态栏与「视图」菜单可见
+- **GPU 笔刷预览**（beta18）：普通图层 + 正常混合 + 不透明度 100% 时，笔画在 GPU 上实时预览，抬笔一次性提交到瓦片并记录增量撤销；其他情况自动走原路径
+- **GPU 合成**（beta13/15/16/18）：WebGL2 平铺图层渲染，平移 / 缩放 / 旋转不再每帧走 Canvas2D；beta15 支持图层组、图层 / 组蒙版、正片叠底 / 滤色 / 叠加 / 柔光 / 变暗 / 变亮 / 颜色减淡 / 线性减淡；剪贴蒙版 / 层级过深 / 超大瓦片自动回退；beta16 瓦片进 256×256 纹理数组，简单路径一次 instanced draw 画完；beta18 简单图层上的画笔先走 GPU 预览，抬笔再批量提交，状态栏与「视图」菜单可见
 
 ## 照片级界面说明
 
@@ -84,9 +85,9 @@ macOS 产物在 `src-tauri/target/release/bundle/macos/`（`.app`）与 `bundle/
 ```bash
 npm test
 # 需要本机安装 Google Chrome / Chromium；可用 CHROME_BIN 指定路径
-# 自动启动静态服务器 + headless Chrome，跑 7 个页面 / 268 项：
+# 自动启动静态服务器 + headless Chrome，跑 8 个页面 / 279 项：
 # test-engine 10、test-n1 28、test-n2 51、test-n3 30、
-# test-n5 41、test-tiles 46、test-gpu 62
+# test-n5 41、test-tiles 46、test-brush 11、test-gpu 62
 # 只跑某个页面：TEST_PAGES=test-gpu.html npm test
 ```
 
@@ -96,17 +97,17 @@ CI 里 `Browser tests` 任务会在 macOS runner 上先跑这组测试，通过�
 
 CI 配置：`.github/workflows/build.yml`
 
-- 推送到 `main` / `v*`：先跑 7 个测试页（268 项），通过后再构建 macOS / Windows 产物
+- 推送到 `main` / `v*`：先跑 8 个测试页（279 项），通过后再构建 macOS / Windows 产物
 - 推送 `v*` 标签：测试通过后自动构建并把安装包附到 GitHub Release
 
 每次迭代建议的流程：
 
 ```bash
 git add -A
-git commit -m "beta17: 具体改动"
-git tag -a v0.1.0-beta17 -m "落笔生花 beta17"
+git commit -m "beta18: 具体改动"
+git tag -a v0.1.0-beta18 -m "落笔生花 beta18"
 git push origin main
-git push origin v0.1.0-beta17
+git push origin v0.1.0-beta18
 ```
 
 > 标签必须以 `v` 开头才会触发 Release。版本号建议与 `CHANGELOG.md` 的 betaN 对应。
@@ -141,8 +142,8 @@ docs/               文档与截图
 - 颜色管理仅 sRGB 8 位/通道，暂无 ICC / 16 位
 - 单一文档窗口；无多文档标签、无液化 / 滤镜
 - 面板仍是三个固定坞组：标签可组间拖拽 / 停靠，浮动面板可并入标签组，但尚未实现任意新建 / 拆分坞组（PS 的 group 全行为）
-- 测试已接入 `npm test`（零依赖 Node + headless Chrome，7 个页面 / 268 项）和 CI `Browser tests` 任务；GPU 页面需要 WebGL2
-- GPU 已支持普通图层 / 组 / 蒙版 / 8 种混合模式，瓦片走纹理数组 + instanced draw；剪贴蒙版、组嵌套 >4 层和超大瓦片仍回退 CPU，下一步做笔刷印章 GPU 化 / OffscreenCanvas + Worker
+- 测试已接入 `npm test`（零依赖 Node + headless Chrome，8 个页面 / 279 项）和 CI `Browser tests` 任务；GPU / 笔刷页面需要 WebGL2
+- GPU 已支持普通图层 / 组 / 蒙版 / 8 种混合模式，瓦片走纹理数组 + instanced draw；简单图层笔画有 GPU 预览 + 抬笔批量提交，复杂图层 / 橡皮 / 选择 / 蒙版仍走原逐笔路径；下一步做 OffscreenCanvas + Worker 与 TypeScript
 - 文档空闲时仍会用 Canvas2D 合成一份 `engine.doc` 供导航器 / 吸管使用，复杂文档会有一次短暂空闲开销
 
 技术栈评估与演进建议见 [docs/TECH_STACK.md](docs/TECH_STACK.md)。

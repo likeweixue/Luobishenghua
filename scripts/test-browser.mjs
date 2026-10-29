@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PAGES = (process.env.TEST_PAGES ||
-  'test-engine.html,test-n1.html,test-n2.html,test-n3.html,test-n5.html,test-tiles.html,test-gpu.html')
+  'test-engine.html,test-n1.html,test-n2.html,test-n3.html,test-n5.html,test-tiles.html,test-brush.html,test-gpu.html')
   .split(',').map(s => s.trim()).filter(Boolean);
 const PAGE_TIMEOUT = Number(process.env.TEST_TIMEOUT_MS) || 30000;
 const sleep = ms => new Promise(r => setTimeout(r, ms));

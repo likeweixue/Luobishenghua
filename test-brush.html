@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>BRUSH GPU TEST</title>
+<style>
+  body{background:#1b1b1d;color:#ddd;font:12px/1.6 -apple-system,monospace;padding:16px}
+  pre{white-space:pre-wrap}
+  canvas{position:absolute;left:-20000px;top:0}
+</style></head>
+<body>
+<canvas id="c2d" width="440" height="340"></canvas>
+<canvas id="c2dx" width="440" height="340"></canvas>
+<canvas id="gl" width="440" height="340"></canvas>
+<pre id="out">running…</pre>
+<script type="module">
+import { Engine } from './app/js/engine.js';
+import { LayerStack } from './app/js/layers.js';
+import { getStamp, drawDabAt } from './app/js/brushes.js';
+
+const out = [];
+let pass = 0, fail = 0;
+const check = (ok, name, detail = '') => {
+  if (ok) { pass++; out.push('  ✅ ' + name); }
+  else { fail++; out.push('  ❌ ' + name + (detail ? ' — ' + detail : '')); }
+};
+const log = (s) => { out.push(s); document.getElementById('out').textContent = out.join('\n'); };
+
+const c2d = document.getElementById('c2d');
+const c2dx = document.getElementById('c2dx');
+const gl = document.getElementById('gl');
+for (const c of [c2d, c2dx, gl]) { c.style.width = '440px'; c.style.height = '340px'; }
+
+function block(surface, color, x, y, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const cc = c.getContext('2d');
+  cc.fillStyle = color;
+  cc.fillRect(0, 0, w, h);
+  surface.putCanvas(c, x, y);
+}
+
+// paper / 底层 / 笔刷目标层 / 上层（半透明）——目标层夹在中间，验证预览不会被顶到最上面
+function makeStack() {
+  const s = new LayerStack(400, 300);
+  const below = s.layers[1];
+  below.name = '底层';
+  block(below.surface, '#2f6fa8', 60, 160, 260, 80);   // 蓝
+
+  const target = s._create('笔刷目标');
+  block(target.surface, '#e24b4a', 40, 40, 180, 100);   // 红
+  s.layers.push(target);
+
+  const above = s._create('上层');
+  above.opacity = 0.5;
+  block(above.surface, '#2f9e75', 200, 50, 150, 100);   // 绿 50%
+  s.layers.push(above);
+  s.activeId = target.id;
+  return s;
+}
+
+const DABS = [
+  { x: 90, y: 80, size: 50, alpha: 0.9 },    // 红块上
+  { x: 250, y: 90, size: 60, alpha: 0.85 },  // 上层半透明下面
+  { x: 150, y: 190, size: 60, alpha: 0.8 },  // 蓝块上
+  { x: 335, y: 120, size: 46, alpha: 0.7 },  // 上层边缘下面
+];
+
+function setView(engine, scale, tx, ty) {
+  engine.view.scale = scale;
+  engine.view.rotation = 0;
+  engine.view.tx = tx;
+  engine.view.ty = ty;
+  engine._paperDirty = true;
+}
+
+function screenOf(view, x, y) {
+  return [view.tx + x * view.scale, view.ty + y * view.scale];
+}
+
+function read2d(engine, x, y) {
+  const dpr = engine.dpr;
+  const d = engine.ctx.getImageData(Math.round(x * dpr), Math.round(y * dpr), 1, 1).data;
+  return [d[0], d[1], d[2]];
+}
+
+function readGl(engine, x, y) {
+  const dpr = engine.dpr;
+  const g = engine.gpu.gl;
+  const buf = new Uint8Array(4);
+  g.readPixels(
+    Math.round(x * dpr),
+    Math.round((engine.canvas.clientHeight - 1 - y) * dpr),
+    1, 1, g.RGBA, g.UNSIGNED_BYTE, buf,
+  );
+  return [buf[0], buf[1], buf[2]];
+}
+
+function near(a, b, tol = 4) {
+  return Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol && Math.abs(a[2] - b[2]) <= tol;
+}
+
+function compareAt(e2, e3, name, world, tol = 4) {
+  const [sx, sy] = screenOf(e2.view, world.x, world.y);
+  const a = read2d(e2, sx, sy);
+  const b = readGl(e3, sx, sy);
+  check(near(a, b, tol), name, `2D=${a.join(',')} GPU=${b.join(',')} @${sx.toFixed(1)},${sy.toFixed(1)}`);
+}
+
+try {
+  const s2 = makeStack();
+  const s3 = makeStack();
+  const e2 = new Engine(c2d, 400, 300);
+  e2.layers = s2;
+  e2.resize();
+  setView(e2, 1, 20, 10);
+
+  const e3 = new Engine(c2dx, 400, 300, gl);
+  e3.layers = s3;
+  e3.resize();
+  setView(e3, 1, 20, 10);
+  e3.scheduleDocSync = () => {};
+
+  const stamp = getStamp('hard', '#e24b4a');
+  const target2 = s2.byId(s2.activeId);
+  for (const d of DABS) {
+    target2.surface.stamp(d.x, d.y, d.size / 2 + 1, (ctx) => {
+      drawDabAt(ctx, 'hard', '#e24b4a', d.x, d.y, d.size, d.alpha);
+    });
+  }
+  e2.render();
+
+  e3.setBrushPreview({ layerId: s3.activeId, stamp, dabs: DABS });
+  check(e3.gpuActive(), 'GPU 笔刷预览启用（简单栈）', e3.gpu && e3.gpu.error);
+  e3.render();
+  await new Promise(r => requestAnimationFrame(r));
+
+  log('GPU 笔刷预览：与提交后的 Canvas2D 逐点比对');
+  for (let i = 0; i < DABS.length; i++) {
+    const d = DABS[i];
+    await compareAt(e2, e3, `dab ${i + 1} 覆盖区`, { x: d.x, y: d.y }, 5);
+  }
+  await compareAt(e2, e3, '红块未覆盖区', { x: 100, y: 60 });
+  await compareAt(e2, e3, '上层半透明区', { x: 220, y: 130 }, 5);
+  await compareAt(e2, e3, '蓝块未覆盖区', { x: 150, y: 210 });
+
+  e3.clearBrushPreview();
+  e3.render();
+  await new Promise(r => requestAnimationFrame(r));
+  check(!e3.gpu.brushPreview, '清除预览后状态复位');
+
+  log('回退条件');
+  const s4 = makeStack();
+  s4.byId(s4.activeId).opacity = 0.6;
+  const e4 = new Engine(c2dx, 400, 300, gl);
+  e4.layers = s4;
+  e4.resize();
+  // 直接调用渲染器预览：它自己会拒绝 opacity != 1 的目标层
+  e4.setBrushPreview({ layerId: s4.activeId, stamp, dabs: DABS });
+  const plan = e4.gpu.analyze(s4);
+  check(plan.ok, 'opacity 图层仍可 GPU 合成');
+  e4.gpu.setBrushPreview({ layerId: s4.activeId, stamp, dabs: DABS });
+  check(!e4.gpu._activeBrushPreview(s4), 'opacity != 1 的图层不启用笔刷预览');
+} catch (err) {
+  out.push('💥 异常：' + (err && err.stack ? err.stack : err));
+  fail++;
+}
+
+document.title = fail === 0 ? 'PASS' : 'FAIL';
+document.getElementById('out').textContent = `GPU 笔刷预览测试：${pass} 通过 / ${fail} 失败\n\n` + out.join('\n');
+</script>
+</body>
+</html>

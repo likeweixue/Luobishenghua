@@ -71,6 +71,34 @@ void main() {
   outColor = c * v_meta.z;
 }`;
 
+const VS_BRUSH = `#version 300 es
+layout(location = 0) in vec2 a_unit;
+layout(location = 1) in vec4 a_rect;
+layout(location = 2) in float a_alpha;
+uniform vec2 u_translate;
+uniform mat2 u_rot;
+uniform float u_scale;
+uniform vec2 u_size;
+out vec2 v_uv;
+out float v_alpha;
+void main() {
+  vec2 world = a_rect.xy + a_unit * a_rect.zw;
+  v_uv = vec2(a_unit.x, 1.0 - a_unit.y);
+  v_alpha = a_alpha;
+  vec2 s = u_translate + u_rot * (world * u_scale);
+  gl_Position = vec4(s.x / u_size.x * 2.0 - 1.0, 1.0 - s.y / u_size.y * 2.0, 0.0, 1.0);
+}`;
+
+const FS_BRUSH = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+in float v_alpha;
+uniform sampler2D u_stamp;
+out vec4 outColor;
+void main() {
+  outColor = texture(u_stamp, v_uv) * v_alpha;
+}`;
+
 const FS_CHECKER = `#version 300 es
 precision highp float;
 in vec2 v_world;
@@ -220,6 +248,9 @@ export class GpuRenderer {
     this.maskAtlas = { tex: null, cap: 0, slots: new Map(), free: [] };
     this.batchData = new Float32Array(9 * 256);
     this.batchCount = 0;
+    this.brushPreview = null;           // { layerId, stamp, dabs:[{x,y,size,alpha}] }
+    this.stampTex = new Map();          // stamp canvas -> texture
+    this.brushData = new Float32Array(5 * 256);
     this.frame = 0;
     this.maxTiles = 800;              // 超过就回退 Canvas2D，避免 GPU 纹理爆内存
     this.maxBytes = 200 * 1024 * 1024;
@@ -253,6 +284,7 @@ export class GpuRenderer {
     this.shadowProg = program(gl, VS, FS_SHADOW);
     this.blitProg = program(gl, VS_FULL, FS_BLIT);
     this.compProg = program(gl, VS_FULL, FS_COMPOSITE);
+    this.brushProg = program(gl, VS_BRUSH, FS_BRUSH);
 
     const loc = (p, names) => {
       const o = {};
@@ -271,6 +303,7 @@ export class GpuRenderer {
       },
       blit: loc(this.blitProg, ['tex', 'opacity']),
       comp: loc(this.compProg, ['src', 'dst', 'mode', 'opacity']),
+      brush: loc(this.brushProg, ['translate', 'rot', 'scale', 'size', 'stamp']),
     };
 
     this.vao = gl.createVertexArray();
@@ -299,6 +332,23 @@ export class GpuRenderer {
     gl.enableVertexAttribArray(3);
     gl.vertexAttribPointer(3, 3, gl.FLOAT, false, 36, 24);
     gl.vertexAttribDivisor(3, 1);
+
+    // 笔刷预览 VAO：base quad + 每个 dab 的 rect / alpha
+    this.brushVao = gl.createVertexArray();
+    gl.bindVertexArray(this.brushVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    this.brushVbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.brushVbo);
+    gl.bufferData(gl.ARRAY_BUFFER, 5 * 4 * 512, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 20, 0);
+    gl.vertexAttribDivisor(1, 1);
+    gl.enableVertexAttribArray(2);
+    gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 20, 16);
+    gl.vertexAttribDivisor(2, 1);
+
     gl.bindVertexArray(null);
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.CULL_FACE);
@@ -622,19 +672,104 @@ export class GpuRenderer {
     this._drawQuad(cu, { x: -edgePad, y: -edgePad, w: doc.w + edgePad * 2, h: doc.h + edgePad * 2 });
   }
 
+  setBrushPreview(preview) {
+    this.brushPreview = preview || null;
+  }
+
+  clearBrushPreview() {
+    this.brushPreview = null;
+  }
+
+  _stampTexture(canvas) {
+    let tex = this.stampTex.get(canvas);
+    if (tex) return tex;
+    const gl = this.gl;
+    tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    this.stampTex.set(canvas, tex);
+    return tex;
+  }
+
+  _activeBrushPreview(layers) {
+    const bp = this.brushPreview;
+    if (!bp || !bp.stamp || !bp.dabs || !bp.dabs.length) return null;
+    const index = layers.layers.findIndex(n => n.id === bp.layerId);
+    if (index < 0) return null;
+    const node = layers.layers[index];
+    if (!node || !node.visible || node.type !== 'layer') return null;
+    if (node.opacity !== 1 || (node.blend || 'source-over') !== 'source-over') return null;
+    if (node.mask || node.clipping) return null;
+    return { ...bp, index, node };
+  }
+
+  _drawBrushPreview(bp, view, cssW, cssH) {
+    const dabs = bp.dabs;
+    if (!dabs.length) return;
+    const gl = this.gl;
+    const need = dabs.length * 5;
+    if (this.brushData.length < need) this.brushData = new Float32Array(need * 2);
+    const d = this.brushData;
+    let n = 0;
+    for (const dab of dabs) {
+      d[n++] = dab.x - dab.size / 2;
+      d[n++] = dab.y - dab.size / 2;
+      d[n++] = dab.size;
+      d[n++] = dab.size;
+      d[n++] = dab.alpha;
+    }
+    const tex = this._stampTexture(bp.stamp);
+    gl.useProgram(this.brushProg);
+    const u = this._setView(this.u.brush, view, cssW, cssH);
+    gl.uniform1i(u.stamp, 0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.brushVbo);
+    gl.bufferData(gl.ARRAY_BUFFER, d.subarray(0, n), gl.DYNAMIC_DRAW);
+    gl.bindVertexArray(this.brushVao);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, dabs.length);
+    gl.bindVertexArray(null);
+  }
+
   _renderSimple(layers, view, cssW, cssH) {
     const gl = this.gl;
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    const items = [];
-    for (const node of layers.layers) {
-      if (!node.visible || node.opacity <= 0) continue;
+
+    const collect = (node) => {
+      const out = [];
+      if (!node || !node.visible || node.opacity <= 0) return out;
       const s = node.surface;
-      for (const t of s.tiles.values()) {
-        items.push({ s, t, opacity: node.opacity, mask: null });
-      }
+      for (const t of s.tiles.values()) out.push({ s, t, opacity: node.opacity, mask: null });
+      return out;
+    };
+
+    const bp = this._activeBrushPreview(layers);
+    if (!bp) {
+      const items = [];
+      for (const node of layers.layers) items.push(...collect(node));
+      this._drawBatch(items, view, cssW, cssH, false);
+      return;
     }
-    this._drawBatch(items, view, cssW, cssH, false);
+
+    const below = [];
+    const active = [];
+    const above = [];
+    for (let i = 0; i < layers.layers.length; i++) {
+      const items = collect(layers.layers[i]);
+      if (!items.length) continue;
+      if (i < bp.index) below.push(...items);
+      else if (i === bp.index) active.push(...items);
+      else above.push(...items);
+    }
+    if (below.length) this._drawBatch(below, view, cssW, cssH, false);
+    if (active.length) this._drawBatch(active, view, cssW, cssH, false);
+    this._drawBrushPreview(bp, view, cssW, cssH);
+    if (above.length) this._drawBatch(above, view, cssW, cssH, false);
   }
 
   _drawBatch(items, view, cssW, cssH, maskAsAtlas) {
@@ -822,6 +957,13 @@ export class GpuRenderer {
       atlas.slots.clear();
       atlas.free.length = 0;
     }
+    if (gl) {
+      for (const tex of this.stampTex.values()) {
+        try { gl.deleteTexture(tex); } catch { /* lost */ }
+      }
+    }
+    this.stampTex.clear();
+    this.brushPreview = null;
     this._deleteFbos();
   }
 
@@ -831,9 +973,11 @@ export class GpuRenderer {
     this.dropTextures();
     gl.deleteBuffer(this.vbo);
     gl.deleteBuffer(this.instVbo);
+    gl.deleteBuffer(this.brushVbo);
     gl.deleteVertexArray(this.vao);
     gl.deleteVertexArray(this.instVao);
-    for (const p of [this.tileProg, this.checkerProg, this.shadowProg, this.blitProg, this.compProg]) gl.deleteProgram(p);
+    gl.deleteVertexArray(this.brushVao);
+    for (const p of [this.tileProg, this.checkerProg, this.shadowProg, this.blitProg, this.compProg, this.brushProg]) gl.deleteProgram(p);
     this.ok = false;
   }
 }

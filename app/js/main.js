@@ -2,7 +2,7 @@
 // DeepSeek 自 beta12 起参与落笔生花的界面、面板交互、WebGL2 合成与测试（2026）。
 import { Engine } from './engine.js';
 import { History } from './history.js';
-import { BrushPresets, BrushRegistry, registerCustomBrush, brushThumbnail, pressureSize, pressureAlpha, drawDab, getStamp } from './brushes.js';
+import { BrushPresets, BrushRegistry, registerCustomBrush, brushThumbnail, pressureSize, pressureAlpha, drawDab, drawDabAt, getStamp } from './brushes.js';
 import { readABR } from './abr.js';
 import { initMenuBar, aboutDialog, shortcutsDialog, settingsDialog, newDocDialog, showMenuAt } from './menu.js';
 import { icon } from './icons.js';
@@ -66,6 +66,7 @@ const state = {
   smoothing: 0,           // 防抖强度 0..1
   smoothPoint: null,     // 防抖平滑后的位置
   drawing: false,
+  gpuStroke: null,        // GPU 笔刷预览会话：{ layerId, type, color, stamp, dabs }
   panning: false,
   spaceDown: false,
   last: null,
@@ -1661,9 +1662,35 @@ function maskedDab(ctx, type, color, x, y, size, alpha, jitter) {
   ctx.restore();
 }
 
+function canGpuBrushPreview(l) {
+  if (!l || l.type !== 'layer' || !l.visible || l.locked) return false;
+  if (state.tool === 'eraser' || state.editMask || selection.active) return false;
+  if (l.opacity !== 1 || (l.blend || 'source-over') !== 'source-over') return false;
+  if (l.mask || l.clipping || l.lockAlpha) return false;
+  if (!engine.gpuActive()) return false;
+  const plan = engine.gpu.lastPlan;
+  if (!plan || !plan.ok || plan.complex) return false;
+  return true;
+}
+
 function stampAt(x, y, pressure) {
   const l = layers.active;
   if (!l) return;
+  const gs = state.gpuStroke;
+  if (gs && gs.layerId === l.id) {
+    const type = gs.type;
+    const preset = BrushRegistry.get(type);
+    const size = pressureSize(type, state.size, pressure) * Dynamics.tiltSizeFactor();
+    const alpha = pressureAlpha(type, state.opacity, pressure);
+    const scatter = (preset.jitter || 0) + Dynamics.scatter;
+    const jx = (Math.random() - 0.5) * scatter;
+    const jy = (Math.random() - 0.5) * scatter;
+    const dab = { x: x + jx * size, y: y + jy * size, size, alpha };
+    gs.dabs.push(dab);
+    markDabDirty(dab.x, dab.y, size);
+    scheduleStrokeRender();
+    return;
+  }
   if (l.type !== 'layer' && !(state.editMask && l.mask)) return;
   const type = activeBrushType();
   const preset = BrushRegistry.get(type);
@@ -1713,6 +1740,14 @@ function beginStroke(e) {
   state.last = { ...p, pressure };
   state.smoothPoint = { x: p.x, y: p.y };
   state.spacingLeft = 0;
+  if (canGpuBrushPreview(l)) {
+    const type = activeBrushType();
+    const stamp = getStamp(type, state.color);
+    state.gpuStroke = { layerId: l.id, type, color: state.color, stamp, dabs: [] };
+    engine.setBrushPreview({ layerId: l.id, stamp, dabs: state.gpuStroke.dabs });
+  } else {
+    state.gpuStroke = null;
+  }
   stampAt(p.x, p.y, pressure);
   scheduleStrokeRender();
   return true;
@@ -1761,6 +1796,29 @@ function continueStroke(e) {
       `压感: ${Math.round(pressure * 100)}%` + (ev.pointerType === 'pen' ? ' (数位笔)' : ' (鼠标/触控板)');
   }
   scheduleStrokeRender();
+}
+
+// 抬笔时把预览的 dab 一次性提交到瓦片；before 快照也在提交前统一捕获
+function commitGpuStroke() {
+  const gs = state.gpuStroke;
+  if (!gs) return false;
+  const l = layers.byId(gs.layerId);
+  if (!l || l.type !== 'layer') {
+    engine.clearBrushPreview();
+    state.gpuStroke = null;
+    return false;
+  }
+  if (state.journal) {
+    for (const d of gs.dabs) state.journal.captureBefore(d.x, d.y, d.size / 2 + 2);
+  }
+  for (const d of gs.dabs) {
+    l.surface.stamp(d.x, d.y, d.size / 2 + 1, (ctx) => {
+      drawDabAt(ctx, gs.type, gs.color, d.x, d.y, d.size, d.alpha);
+    });
+  }
+  engine.clearBrushPreview();
+  state.gpuStroke = null;
+  return true;
 }
 
 /* ---------------- 油漆桶 / 渐变 / 涂抹 / 吸管 ---------------- */
@@ -2336,6 +2394,7 @@ function endPointer(e) {
     state.drawing = false;
     state.last = null;
     state.smoothPoint = null;
+    if (state.gpuStroke) commitGpuStroke();
     flushStrokeRender();
     if (state.journal) {
       const toolName = state.tool === 'eraser' ? '橡皮擦' : (BrushRegistry.get(state.brush)?.name || '画笔');

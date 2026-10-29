@@ -58,6 +58,14 @@ export class Engine {
     this.render();
   }
 
+  setBrushPreview(preview) {
+    if (this.gpu) this.gpu.setBrushPreview(preview);
+  }
+
+  clearBrushPreview() {
+    if (this.gpu) this.gpu.clearBrushPreview();
+  }
+
   _renderGpu() {
     if (!this.gpu || !this.gpu.ok) return false;
     try {
