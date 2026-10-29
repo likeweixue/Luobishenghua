@@ -2,6 +2,28 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta22（2026-10-30）
+
+TypeScript 分模块迁移（第二批：engine / layers）。
+
+工程：
+- 新增 `src/engine.ts`、`src/layers.ts`；`tsc` 生成 `app/js/engine.js` /
+  `layers.js`，运行时不变
+- Engine 的 canvas / view / GPU / 渲染入口、LayerStack 的 byId / addLayer /
+  addGroup / composite / snapshotFull 等公开 API 已类型化
+- 内部仍用索引签名过渡，`strict:false` 不变；层节点树暂用 any，
+  先保证行为与现有测试完全一致
+- CI 生成文件校验扩展到 engine.js / layers.js；typecheck → build:ts →
+  git diff → npm test 全链路
+- 生成文件头标注来源 `src/*.ts`
+
+验证：
+- 8 个测试页 / 279 项 + app-e2e 全部通过
+- test-engine / n1 / n2 / n3 / n5 / tiles / gpu / app-e2e 全绿
+- macOS debug .app 构建通过
+- 版本、README、CHANGELOG、TECH_STACK、截图更新到 beta22
+- 下一步：main.js / 面板 / 对话框迁移与 strict 收紧
+
 ## beta21（2026-10-29）
 
 TypeScript 分模块迁移（第一批：GPU / 瓦片 / Worker）。

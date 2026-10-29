@@ -3,7 +3,7 @@
 <head>
 <!--
   落笔生花 Luobishenghua · Photoshop 风格绘画工作台
-  DeepSeek 自 beta12 起参与界面、面板交互、WebGL2 合成与测试；beta14 加入单列工具栏与标签拖拽，beta15 把 GPU 合成扩展到组 / 蒙版 / 混合模式，beta16 用纹理数组 + instanced draw 批量化瓦片，beta17 接入无头 Chrome 自动化回归测试，beta18 加入 GPU 笔刷预览与抬笔批量提交，beta19 加入真实应用端到端回归，beta20 用 OffscreenCanvas + Worker 把抬笔提交移出主线程，beta21 把核心 GPU / 瓦片 / Worker 模块迁移到 TypeScript。
+  DeepSeek 自 beta12 起参与界面、面板交互、WebGL2 合成与测试；beta14 加入单列工具栏与标签拖拽，beta15 把 GPU 合成扩展到组 / 蒙版 / 混合模式，beta16 用纹理数组 + instanced draw 批量化瓦片，beta17 接入无头 Chrome 自动化回归测试，beta18 加入 GPU 笔刷预览与抬笔批量提交，beta19 加入真实应用端到端回归，beta20 用 OffscreenCanvas + Worker 把抬笔提交移出主线程，beta21 把核心 GPU / 瓦片 / Worker 模块迁移到 TypeScript，beta22 继续迁移 engine / layers。
 -->
 
 <meta charset="UTF-8">
@@ -84,7 +84,7 @@
     <nav class="menus" id="menu-items"></nav>
     <div class="menubar-fill" data-tauri-drag-region></div>
     <div class="menubar-right">
-      <span class="beta-tag">beta21</span>
+      <span class="beta-tag">beta22</span>
       <button class="mb-icon" id="btn-home" title="首页 / 最近文件" data-tip="首页">
         <svg class="ic"><use href="#i-home"/></svg>
       </button>
@@ -493,7 +493,7 @@
     <span class="sb-sep"></span>
     <span id="status-autosave">未修改</span>
     <span class="sb-sep"></span>
-    <span class="sb-version">beta21</span>
+    <span class="sb-version">beta22</span>
   </footer>
 </div>
 
@@ -552,7 +552,7 @@
   </div>
 
   <div class="home-foot">
-    <span>落笔生花 Luobishenghua · beta21</span>
+    <span>落笔生花 Luobishenghua · beta22</span>
     <span>WorkBuddy × likeweixue</span>
   </div>
 </div>

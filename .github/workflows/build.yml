@@ -34,7 +34,7 @@ jobs:
         run: npm run build:ts
 
       - name: Verify generated app/js files are committed
-        run: git diff --exit-code -- app/js/gpu.js app/js/tiles.js app/js/brush-worker.js
+        run: git diff --exit-code -- app/js/gpu.js app/js/tiles.js app/js/brush-worker.js app/js/engine.js app/js/layers.js
 
       - name: Run browser tests
         run: npm test
