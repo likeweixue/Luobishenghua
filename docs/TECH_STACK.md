@@ -4,7 +4,7 @@
 
 1. **Photoshop 桌面版不是 HTML/CSS/JS 做的。** 它的核心是 C++（图像合成、色彩管理、文件格式、GPU、插件），界面是原生框架；只有扩展面板 / 脚本层使用 JavaScript（UXP / ExtendScript）。CSP 同样以 C++ 核心 + 原生界面为主。
 2. **HTML/CSS/JS 做 UI 完全没问题，而且很适合你现在的阶段。** 你的界面、面板、对话框、快捷键、主题，用 Web 技术迭代速度远快于原生 UI。
-3. **决定绘画软件上限的不是 CSS/HTML，而是渲染与笔刷管线。** 目前项目以 Canvas 2D + JS 为主，beta13 起简单平铺图层已走 WebGL2，beta14 面板标签已可自由拖拽重组，beta15 组 / 蒙版 / 混合模式也上了 GPU，beta16 瓦片走纹理数组 + instanced draw，beta18 简单图层笔画 GPU 预览 + 抬笔批量提交，配合 Tauri 2 的 Rust 壳，是一个合理的起步架构；要往专业级走，继续把「剪贴蒙版 / 笔刷铺排 / 大图缩放」迁到 GPU（WebGL2 / WebGPU），把重活交给 WASM 或 Rust。
+3. **决定绘画软件上限的不是 CSS/HTML，而是渲染与笔刷管线。** 目前项目以 Canvas 2D + JS 为主，beta13 起简单平铺图层已走 WebGL2，beta14 面板标签已可自由拖拽重组，beta15 组 / 蒙版 / 混合模式也上了 GPU，beta16 瓦片走纹理数组 + instanced draw，beta18 简单图层笔画 GPU 预览 + 抬笔批量提交，beta19 应用端到端回归，配合 Tauri 2 的 Rust 壳，是一个合理的起步架构；要往专业级走，继续把「剪贴蒙版 / 笔刷铺排 / 大图缩放」迁到 GPU（WebGL2 / WebGPU），把重活交给 WASM 或 Rust。
 4. 如果目标是「专业绘画工具」而不是「PS 克隆」，**HTML/CSS/JS + Tauri + WebGPU/WASM** 是一条现实且成本可控的路线。如果目标是和 PS 正面竞争，最终仍然需要一个 C++/Rust 的像素核心。
 
 ---
@@ -48,7 +48,7 @@
 - 继续用 HTML/CSS/JS + Tauri；把 UI 组件（菜单、面板、滑块、拾色器）抽成可复用的小模块。
 - 引入 **TypeScript**（或至少 JSDoc + `checkJs`）和 **Vite**；保留 `app/` 静态结构，开发时用 Vite HMR。
 - 把 PSD / ABR / ZIP / 自动保存放进 **Web Worker**；缩略图用 OffscreenCanvas。
-- 已先用零依赖 `scripts/test-browser.mjs` 把 8 个浏览器测试页（279 项）接进 CI；后续再评估 Playwright / Vitest 做「打开 PSD → 画一笔 → 撤销 → 保存」的端到端测试。
+- 已用零依赖 `scripts/test-browser.mjs` 把 8 个测试页（279 项）+ 应用端到端（真实指针画一笔 → GPU 预览 → 提交 → 撤销 / 重做）接进 CI；后续再评估 Playwright / Vitest 做 PSD 打开 / 保存链路的测试。
 
 ### 中期（性能分水岭）
 
@@ -58,7 +58,7 @@
 > 自动回退 Canvas2D。4000² / 20 层稀疏简单栈的本机基准：整屏合成 15.8 ms → 0.4 ms，
 > 视图重绘 13.2 ms → 0.1 ms。beta14 面板标签已支持拖拽重组 / 停靠，单列工具栏也已落地。
 > beta16 已把瓦片放进 256×256 纹理数组，并用 instanced draw 合并：简单路径 1 次 draw call，复杂路径每层 1 次。
-> beta17 把 8 个测试页（279 项）接进无头 Chrome + CI。
+> beta17 把 8 个测试页（279 项）接进无头 Chrome + CI；beta19 增加真实应用端到端。
 > beta18 已把简单图层的笔刷预览搬到 GPU，并在抬笔时批量提交；
 > 下一步是 OffscreenCanvas + Worker，以及 TypeScript 迁移。
 

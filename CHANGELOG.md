@@ -2,6 +2,21 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta19（2026-10-29）
+
+应用级端到端回归。
+
+测试：
+- `scripts/test-browser.mjs` 增加 app-e2e：真实导航到 `app/?nohome=1`，
+  用 CDP 指针在画布上画一笔；断言落笔中 `gpuStroke` / `dabs` / GPU 预览存在，
+  抬笔后预览清空、瓦片写入、历史 +1，随后撤销 / 重做
+- 本机与 CI 均为 8 个测试页 / 279 项 + 1 条 app-e2e，全部通过
+- 测试 job 现在覆盖 9 个场景；失败仍阻断 macOS / Windows 构建
+
+说明：
+- 本版不改产品逻辑；版本、README、CHANGELOG、TECH_STACK、截图更新到 beta19
+- OffscreenCanvas + Worker、TypeScript 迁移仍是后续工作
+
 ## beta18（2026-10-29）
 
 GPU 笔刷预览 + 抬笔批量提交。

@@ -157,6 +157,83 @@ async function run() {
       else failed++;
       console.log(`${ok ? '✅' : '❌'} ${name.padEnd(18)} ${title || '(no title)'}  ${detail}`);
     }
+    // 应用级端到端：真实指针画一笔 → GPU 预览 → 抬笔提交 → 撤销 / 重做
+    let e2eOk = false;
+    let e2eDetail = '';
+    try {
+      await send('Page.navigate', { url: `http://127.0.0.1:${serverPort}/app/?nohome=1` });
+      await sleep(2200);
+      const info = await send('Runtime.evaluate', {
+        expression: `(() => {
+          const c = document.getElementById('canvas');
+          if (!c) return null;
+          const r = c.getBoundingClientRect();
+          return { x: r.x, y: r.y, w: r.width, h: r.height, has: !!window.__lbsh };
+        })()`,
+        returnByValue: true,
+      });
+      const r = info.result?.value;
+      if (!r || !r.has) throw new Error('app / __lbsh not ready');
+      const sx = Math.round(r.x + r.w * 0.38);
+      const sy = Math.round(r.y + r.h * 0.38);
+      const ex = Math.round(r.x + r.w * 0.62);
+      const ey = Math.round(r.y + r.h * 0.62);
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: sx, y: sy, button: 'left', buttons: 1, clickCount: 1 });
+      for (let i = 1; i <= 6; i++) {
+        await send('Input.dispatchMouseEvent', {
+          type: 'mouseMoved',
+          x: Math.round(sx + (ex - sx) * i / 6),
+          y: Math.round(sy + (ey - sy) * i / 6),
+          button: 'left', buttons: 1,
+        });
+        await sleep(35);
+      }
+      const mid = await send('Runtime.evaluate', {
+        expression: `(() => { const s = window.__lbsh.state; return { gpuStroke: !!s.gpuStroke, dabs: s.gpuStroke ? s.gpuStroke.dabs.length : 0, preview: !!__lbsh.engine.gpu.brushPreview, drawing: !!s.drawing }; })()`,
+        returnByValue: true,
+      });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: ex, y: ey, button: 'left', buttons: 0, clickCount: 1 });
+      await sleep(450);
+      const after = await send('Runtime.evaluate', {
+        expression: `(() => {
+          const l = __lbsh.layers.active;
+          const h = __lbsh.history;
+          return {
+            gpuStroke: !!__lbsh.state.gpuStroke,
+            preview: !!__lbsh.engine.gpu.brushPreview,
+            tiles: l ? [...l.surface.tiles.values()].length : 0,
+            undo: h.undoStack.length,
+            redo: h.redoStack.length,
+            gpu: document.getElementById('status-gpu')?.textContent || '',
+          };
+        })()`,
+        returnByValue: true,
+      });
+      const undo = await send('Runtime.evaluate', {
+        expression: `(() => {
+          const h = __lbsh.history;
+          const before = h.undoStack.length;
+          h.undo();
+          const undone = h.undoStack.length;
+          const redo = h.redoStack.length;
+          h.redo();
+          return { before, undone, redoAfterUndo: redo, afterRedo: h.undoStack.length };
+        })()`,
+        returnByValue: true,
+      });
+      const m = mid.result?.value || {};
+      const a = after.result?.value || {};
+      const u = undo.result?.value || {};
+      e2eDetail = JSON.stringify({ mid: m, after: a, undo: u });
+      e2eOk = m.gpuStroke && m.dabs > 0 && m.preview && m.drawing
+        && !a.gpuStroke && !a.preview && a.tiles > 0 && a.undo >= 1 && a.gpu === 'GPU'
+        && u.before >= 1 && u.undone === u.before - 1 && u.redoAfterUndo >= 1 && u.afterRedo === u.before;
+    } catch (err) {
+      e2eDetail = String(err && err.message || err);
+    }
+    if (e2eOk) passed++;
+    else failed++;
+    console.log(`${e2eOk ? '✅' : '❌'} ${'app-e2e'.padEnd(18)} ${e2eOk ? 'PASS' : 'FAIL'}  ${e2eDetail}`);
     ws.close();
   } catch (err) {
     console.error('测试运行失败：' + (err && err.message || err));
