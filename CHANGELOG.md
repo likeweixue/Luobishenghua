@@ -2,6 +2,22 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta23（2026-10-30）
+
+TypeScript 分模块迁移（第三批：history / transform / brushes）。
+
+工程：
+- 新增 `src/history.ts`、`src/transform.ts`、`src/brushes.ts`；tsc 生成
+  `app/js/history.js` / `transform.js` / `brushes.js`，运行时不变
+- History 的 undo / redo / jumpTo / beginStroke / commitStroke、Transform 的
+  start / pointerMove / commit / cancel、BrushPreset / BrushRegistry /
+  getStamp / drawDabAt 等公开 API 已类型化
+- 内部仍用索引签名过渡，strict:false 不变
+- CI 生成文件校验扩展到 history.js / transform.js / brushes.js
+- 8 个测试页 / 279 项 + app-e2e 全部通过；macOS debug .app 构建通过
+- 版本、README、CHANGELOG、TECH_STACK、截图更新到 beta23
+- 下一步：main.js / dock / menu 与 strict 收紧
+
 ## beta22（2026-10-30）
 
 TypeScript 分模块迁移（第二批：engine / layers）。
