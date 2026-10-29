@@ -2,6 +2,28 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta21（2026-10-29）
+
+TypeScript 分模块迁移（第一批：GPU / 瓦片 / Worker）。
+
+工程：
+- 新增 `src/gpu.ts`、`src/tiles.ts`、`src/brush-worker.ts`、`src/types.d.ts`
+- `tsconfig.json`：ES2022 + DOM/WebWorker，`tsc` 输出到 `app/js/`；
+  运行时仍直接加载生成的 JS，Tauri / 静态预览不需要先构建
+- 新增 `npm run typecheck` / `npm run build:ts`；TypeScript 5.7 devDependency
+- 生成的 `app/js/gpu.js` / `tiles.js` / `brush-worker.js` 已提交；文件头标注
+  “由 src 生成，请勿直接改 app/js”
+- CI `Browser tests` 任务增加：typecheck → build:ts → `git diff --exit-code`
+  校验生成文件 → npm test
+- `tsconfig` 当前 `strict: false`，公开 API 已有类型；内部先用索引签名过渡，
+  后续逐步收紧，避免一次硬切破坏现有行为
+
+验证：
+- 8 个测试页 / 279 项 + app-e2e 全部通过；worker 提交 / GPU 合成 / 瓦片全部正常
+- macOS debug .app 构建通过
+- 版本、README、CHANGELOG、TECH_STACK、截图更新到 beta21
+- 下一步：engine / layers / 主程序与面板的 TS 迁移
+
 ## beta20（2026-10-29）
 
 OffscreenCanvas + Worker 抬笔提交。

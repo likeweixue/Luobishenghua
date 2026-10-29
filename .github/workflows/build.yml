@@ -27,6 +27,15 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Typecheck TypeScript modules
+        run: npm run typecheck
+
+      - name: Build TypeScript modules
+        run: npm run build:ts
+
+      - name: Verify generated app/js files are committed
+        run: git diff --exit-code -- app/js/gpu.js app/js/tiles.js app/js/brush-worker.js
+
       - name: Run browser tests
         run: npm test
         env:

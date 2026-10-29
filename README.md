@@ -1,10 +1,10 @@
 # 落笔生花 Luobishenghua
 
-一款面向绘画的桌面软件：瓦片化图层存储、压感笔刷引擎、PSD 分层互通、`.abr` 笔刷导入、原生工程 `.lbsh`。从 **beta12** 起采用 Photoshop 风格工作台，**beta13** 加入 WebGL2 合成，**beta14** 加入单列工具栏与可拖拽面板标签，**beta15** 把 GPU 合成扩展到组 / 蒙版 / 混合模式，**beta16** 用纹理数组 + instanced draw 把瓦片批量化，**beta17** 接入无头 Chrome 自动化回归测试，**beta18** 加入 GPU 笔刷预览与抬笔批量提交，**beta19** 加入真实应用端到端回归，**beta20** 用 OffscreenCanvas + Worker 把抬笔提交移出主线程。
+一款面向绘画的桌面软件：瓦片化图层存储、压感笔刷引擎、PSD 分层互通、`.abr` 笔刷导入、原生工程 `.lbsh`。从 **beta12** 起采用 Photoshop 风格工作台，**beta13** 加入 WebGL2 合成，**beta14** 加入单列工具栏与可拖拽面板标签，**beta15** 把 GPU 合成扩展到组 / 蒙版 / 混合模式，**beta16** 用纹理数组 + instanced draw 把瓦片批量化，**beta17** 接入无头 Chrome 自动化回归测试，**beta18** 加入 GPU 笔刷预览与抬笔批量提交，**beta19** 加入真实应用端到端回归，**beta20** 用 OffscreenCanvas + Worker 把抬笔提交移出主线程，**beta21** 把核心 GPU / 瓦片 / Worker 模块迁移到 TypeScript。
 
 ![落笔生花工作台](docs/screenshot.png)
 
-> 当前版本：**beta20** · 平台：macOS / Windows（Tauri 2）
+> 当前版本：**beta21** · 平台：macOS / Windows（Tauri 2）
 >
 > 技术栈：HTML + CSS + JavaScript（无框架）+ Canvas 2D + Tauri 2（Rust 壳）
 >
@@ -24,6 +24,7 @@
 - **文件**：PSD 分层读写、PNG 导出、`.lbsh` 工程、自动保存、崩溃恢复、最近文件
 - **工作台**（beta12）：PS 式工具栏 / 选项栏 / 文档标签 / 标尺 / 面板坞 / 状态栏，可折叠与调整面板，浮动画笔面板，PS 风格拾色器
 - **面板坞**（beta14）：单列工具栏；标签可在颜色 / 图层 / 历史三个组之间拖拽重排、跨组停靠；浮动面板拖到标签栏即可并入；标签拖出画布即浮动；布局持久化
+- **TypeScript**（beta21）：`src/gpu.ts` / `src/tiles.ts` / `src/brush-worker.ts` 为 TS 源，`tsc` 生成 `app/js/*.js`；CI 跑 typecheck + 生成文件校验；面板 / 主程序仍为 JS，后续分模块迁移
 - **GPU 笔刷预览**（beta18/20）：普通图层 + 正常混合 + 不透明度 100% 时，笔画在 GPU 上实时预览；抬笔提交在 Worker + OffscreenCanvas 里批量完成，主线程只做 before/after 快照。其他情况自动走原路径
 - **GPU 合成**（beta13/15/16/18）：WebGL2 平铺图层渲染，平移 / 缩放 / 旋转不再每帧走 Canvas2D；beta15 支持图层组、图层 / 组蒙版、正片叠底 / 滤色 / 叠加 / 柔光 / 变暗 / 变亮 / 颜色减淡 / 线性减淡；剪贴蒙版 / 层级过深 / 超大瓦片自动回退；beta16 瓦片进 256×256 纹理数组，简单路径一次 instanced draw 画完；beta18 简单图层上的画笔先走 GPU 预览，抬笔再批量提交，状态栏与「视图」菜单可见
 
@@ -94,6 +95,20 @@ npm test
 
 CI 里 `Browser tests` 任务会在 macOS runner 上先跑这组测试，通过后 `Build macOS` / `Build Windows` 才会开始。
 
+## TypeScript
+
+从 beta21 起，核心模块逐步迁移到 TypeScript：
+
+```bash
+npm run typecheck    # tsc --noEmit，检查 src/
+npm run build:ts     # 生成 app/js/gpu.js / tiles.js / brush-worker.js
+```
+
+- 源文件：`src/gpu.ts`、`src/tiles.ts`、`src/brush-worker.ts`、`src/types.d.ts`
+- 运行时仍直接加载 `app/js/*.js`，生成的 JS 已提交，所以单纯预览 / 打包不需要先跑 tsc
+- 修改 `src/` 后必须 `npm run build:ts`，CI 会校验生成文件是否与源码一致
+- 面板 / 主程序仍是 JS，后续按 engine → layers → UI 顺序继续迁移；`tsconfig` 目前 `strict: false`，先保证行为不变，再逐步收紧
+
 ## GitHub 打包 / 发版
 
 CI 配置：`.github/workflows/build.yml`
@@ -105,10 +120,10 @@ CI 配置：`.github/workflows/build.yml`
 
 ```bash
 git add -A
-git commit -m "beta20: 具体改动"
-git tag -a v0.1.0-beta20 -m "落笔生花 beta20"
+git commit -m "beta21: 具体改动"
+git tag -a v0.1.0-beta21 -m "落笔生花 beta21"
 git push origin main
-git push origin v0.1.0-beta20
+git push origin v0.1.0-beta21
 ```
 
 > 标签必须以 `v` 开头才会触发 Release。版本号建议与 `CHANGELOG.md` 的 betaN 对应。
@@ -116,7 +131,8 @@ git push origin v0.1.0-beta20
 ## 目录结构
 
 ```
-app/                前端（无构建步骤，直接由 Tauri 加载）
+src/                TypeScript 源（gpu / tiles / brush-worker / types）
+app/                前端运行时（生成后的 JS + HTML/CSS，由 Tauri 加载）
   index.html        工作台 DOM + SVG 图标 sprite
   css/style.css     Photoshop 深色主题
   js/main.js        主程序：工具、颜色、图层、历史、菜单接线
@@ -124,8 +140,8 @@ app/                前端（无构建步骤，直接由 Tauri 加载）
   js/colorpicker.js PS 风格拾色器（HSV/RGB/Hex）
   js/rulers.js      标尺
   js/engine.js      Canvas 2D / WebGL2 视图与合成引擎
-  js/gpu.js         WebGL2 瓦片合成器（简单 / 组 / 蒙版 / 混合 FBO 路径）
-  js/tiles.js       256×256 瓦片图层存储
+  js/gpu.js         WebGL2 瓦片合成器（由 src/gpu.ts 生成）
+  js/tiles.js       256×256 瓦片图层存储（由 src/tiles.ts 生成）
   js/layers.js      图层树 / 组 / 蒙版 / 剪贴
   js/psd.js         PSD 读写
   js/abr.js         .abr 解析
@@ -144,7 +160,8 @@ docs/               文档与截图
 - 单一文档窗口；无多文档标签、无液化 / 滤镜
 - 面板仍是三个固定坞组：标签可组间拖拽 / 停靠，浮动面板可并入标签组，但尚未实现任意新建 / 拆分坞组（PS 的 group 全行为）
 - 测试已接入 `npm test`（零依赖 Node + headless Chrome，8 个页面 / 279 项 + 应用端到端）和 CI `Browser tests` 任务；GPU / 笔刷页面需要 WebGL2，worker 不可用时自动回退主线程提交
-- GPU 已支持普通图层 / 组 / 蒙版 / 8 种混合模式，瓦片走纹理数组 + instanced draw；简单图层笔画有 GPU 预览 + Worker 抬笔提交，复杂图层 / 橡皮 / 选择 / 蒙版仍走原逐笔路径；下一步做 TypeScript 迁移
+- TypeScript 迁移进行中：GPU / 瓦片 / Worker 已迁移，面板 / 主程序仍为 JS
+- GPU 已支持普通图层 / 组 / 蒙版 / 8 种混合模式，瓦片走纹理数组 + instanced draw；简单图层笔画有 GPU 预览 + Worker 抬笔提交，复杂图层 / 橡皮 / 选择 / 蒙版仍走原逐笔路径；下一步做 UI / 主程序的 TypeScript 迁移
 - 文档空闲时仍会用 Canvas2D 合成一份 `engine.doc` 供导航器 / 吸管使用，复杂文档会有一次短暂空闲开销
 
 技术栈评估与演进建议见 [docs/TECH_STACK.md](docs/TECH_STACK.md)。

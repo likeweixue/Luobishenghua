@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "WebWorker"],
+    "rootDir": "src",
+    "outDir": "app/js",
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "sourceMap": false,
+    "declaration": false,
+    "removeComments": false,
+    "noEmitOnError": true,
+    "allowJs": false
+  },
+  "include": ["src/**/*.ts"]
+}
