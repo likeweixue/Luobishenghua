@@ -30,7 +30,7 @@ jobs:
       - name: Typecheck TypeScript modules
         run: npm run typecheck
 
-      - name: Strict typecheck (tiles)
+      - name: Strict typecheck (all modules)
         run: npm run typecheck:strict
 
       - name: Build TypeScript modules

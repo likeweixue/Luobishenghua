@@ -151,7 +151,7 @@ export function readABR(buffer) {
             }
             catch (e) {
                 skipped++;
-                warnings.push(`第 ${i + 1} 个笔刷解析失败: ${e.message}`);
+                warnings.push(`第 ${i + 1} 个笔刷解析失败: ${e instanceof Error ? e.message : String(e)}`);
             }
             r.p = recEnd;
         }
@@ -194,7 +194,7 @@ export function readABR(buffer) {
                     }
                     catch (e) {
                         skipped++;
-                        warnings.push('samp 条目解析失败: ' + e.message);
+                        warnings.push('samp 条目解析失败: ' + (e instanceof Error ? e.message : String(e)));
                     }
                     r.p = entryEnd + ((4 - (entryEnd % 4)) % 4); // 4 字节对齐
                 }

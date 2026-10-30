@@ -2,6 +2,23 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta27（2026-10-31）
+
+TypeScript strict 覆盖全部运行时模块。
+
+工程：
+- `tsconfig.strict.json` 从 tiles 扩展到 gpu / engine / layers / history /
+  transform / brushes / main / dock / menu / paint / psd / abr / project / zip /
+  home / colorpicker / rulers / navigator / colorwheel / selection / dynamics /
+  idb / icons / brush-worker，并纳入 globals.d.ts
+- 修复 strict 暴露的问题：catch 变量 unknown 的 `message` 访问、
+  EventTarget / Element 的 dataset / closest 类型、菜单 / abr / main 的错误提示
+- CI 的 strict typecheck 现在覆盖全部运行时模块
+- 部分类内部仍保留 `[key:string]:any` 索引签名与显式 any；strict 已能检查
+  方法参数、空值、catch 类型，下一步逐个移除索引签名
+- 8 个测试页 / 279 项 + app-e2e 全部通过；Tauri debug .app 构建通过
+- 版本、README、CHANGELOG、TECH_STACK、截图更新到 beta27
+
 ## beta26（2026-10-30）
 
 TypeScript strict 收紧（第一批：瓦片层）。

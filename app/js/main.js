@@ -304,7 +304,7 @@ function importABRBuffer(buf) {
             console.warn('[ABR]', result.warnings);
     }
     catch (err) {
-        alert('ABR 读取失败：' + err.message);
+        alert('ABR 读取失败：' + (err instanceof Error ? err.message : String(err)));
     }
 }
 function importABRFile(file) {
@@ -948,7 +948,7 @@ async function saveProject({ saveAs = false } = {}) {
     }
     catch (err) {
         setAutosaveStatus('保存失败');
-        alert('保存工程失败：' + err.message);
+        alert('保存工程失败：' + (err instanceof Error ? err.message : String(err)));
         return false;
     }
 }
@@ -958,7 +958,7 @@ async function openProjectFromBytes(buf, name, path = null) {
         await applyProject(project, { name, path });
     }
     catch (err) {
-        alert('打开工程失败：' + err.message);
+        alert('打开工程失败：' + (err instanceof Error ? err.message : String(err)));
     }
 }
 async function openProjectDialog() {
@@ -974,7 +974,7 @@ async function openProjectDialog() {
             await openProjectFromBytes(bytes, path.split(/[\\/]/).pop(), path);
         }
         catch (err) {
-            alert('打开工程失败：' + err.message);
+            alert('打开工程失败：' + (err instanceof Error ? err.message : String(err)));
         }
         return;
     }
@@ -1146,7 +1146,7 @@ async function saveBytes(bytes, defaultName, filterName, exts) {
             await TAURI.fs.writeFile(path, u8);
         }
         catch (err) {
-            alert('保存失败：' + err.message);
+            alert('保存失败：' + (err instanceof Error ? err.message : String(err)));
         }
         return;
     }
@@ -1213,7 +1213,7 @@ function openPSDFile(file, path = null) {
             loadDocumentFromPSD(psd, { name: file.name, path });
         }
         catch (err) {
-            alert('PSD 读取失败：' + err.message);
+            alert('PSD 读取失败：' + (err instanceof Error ? err.message : String(err)));
         }
     });
 }
@@ -1234,7 +1234,7 @@ async function openPSDDialog() {
             loadDocumentFromPSD(psd, { name, path });
         }
         catch (err) {
-            alert('PSD 读取失败：' + err.message);
+            alert('PSD 读取失败：' + (err instanceof Error ? err.message : String(err)));
         }
         return;
     }
@@ -1290,7 +1290,7 @@ if (TAURI && TAURI.event) {
                 return;
             }
             catch (err) {
-                alert('文件读取失败：' + err.message);
+                alert('文件读取失败：' + (err instanceof Error ? err.message : String(err)));
             }
         }
     });
@@ -1312,7 +1312,7 @@ async function doExportPSD() {
         await saveBytes(bytes, 'luobishenghua.psd', 'Photoshop 文档', ['psd']);
     }
     catch (err) {
-        alert('PSD 导出失败：' + err.message);
+        alert('PSD 导出失败：' + (err instanceof Error ? err.message : String(err)));
     }
 }
 document.getElementById('btn-save-psd').addEventListener('click', doExportPSD);
@@ -1364,7 +1364,7 @@ homeApi = createHome({
                 loadDocumentFromPSD(readPSD(buf), { name: r.name, path: r.path });
             }
             catch (err) {
-                toast('无法打开：' + err.message + '（文件可能已移动）');
+                toast('无法打开：' + (err instanceof Error ? err.message : String(err)) + '（文件可能已移动）');
             }
         }
         else {

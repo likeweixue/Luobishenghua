@@ -284,7 +284,7 @@ export class GpuRenderer {
       this._init();
     } catch (err) {
       this.ok = false;
-      this.error = String(err && err.message || err);
+      this.error = err instanceof Error ? err.message : String(err);
       console.warn('[GPU]', this.error);
     }
     canvas.addEventListener('webglcontextlost', (e) => {

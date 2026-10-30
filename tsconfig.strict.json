@@ -4,5 +4,5 @@
     "strict": true,
     "noEmit": true
   },
-  "include": ["src/tiles.ts"]
+  "include": ["src/tiles.ts", "src/gpu.ts", "src/engine.ts", "src/layers.ts", "src/history.ts", "src/transform.ts", "src/brushes.ts", "src/selection.ts", "src/dynamics.ts", "src/paint.ts", "src/brush-worker.ts", "src/colorpicker.ts", "src/rulers.ts", "src/navigator.ts", "src/colorwheel.ts", "src/home.ts", "src/idb.ts", "src/icons.ts", "src/zip.ts", "src/project.ts", "src/psd.ts", "src/abr.ts", "src/dock.ts", "src/main.ts", "src/globals.d.ts"]
 }

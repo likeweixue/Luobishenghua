@@ -44,8 +44,8 @@ export class Dock {
     this.byId = new Map(this.panels.map(p => [p.dataset.panel, p]));
     this.groupOfPanel = new Map();
     this.groups = [...rootEl.querySelectorAll('.dock-group')].map(el => ({
-      el,
-      key: el.dataset.group,
+      el: el as HTMLElement,
+      key: (el as HTMLElement).dataset.group,
       headEl: el.querySelector('.dock-head'),
       tabsEl: el.querySelector('.dock-tabs'),
       bodyEl: el.querySelector('.dock-body'),
