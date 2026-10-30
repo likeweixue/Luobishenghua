@@ -10,15 +10,15 @@
 
 export const TILE_SIZE = 256;
 
-const key = (tx, ty) => tx + ',' + ty;
+const key = (tx: number, ty: number): string => tx + ',' + ty;
 
 // 复用一张 1×1 画布来 createImageData，避免每次分配上下文
-let _scratchCtx = null;
-function scratchCtx() {
+let _scratchCtx: CanvasRenderingContext2D | null = null;
+function scratchCtx(): CanvasRenderingContext2D {
   if (!_scratchCtx) {
     const c = document.createElement('canvas');
     c.width = c.height = 1;
-    _scratchCtx = c.getContext('2d');
+    _scratchCtx = c.getContext('2d')!;
   }
   return _scratchCtx;
 }
@@ -30,7 +30,7 @@ export function maskToCanvas(surface: TileSurface): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = Math.max(1, surface.w);
   c.height = Math.max(1, surface.h);
-  const ctx = c.getContext('2d');
+  const ctx = c.getContext('2d')!;
   // 默认全显示 = 不透明白
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, c.width, c.height);
@@ -74,7 +74,12 @@ export interface TileRange {
 }
 
 export class TileSurface {
-  [key: string]: any;
+  w: number;
+  h: number;
+  ts: number;
+  blank: string | null;
+  tiles: Map<string, Tile>;
+  _bbox: TileRect | null;
   /**
    * @param blank 新建瓦片时的底色（默认透明）。蒙版用 '#ffffff'：
    *              没被碰过的区域等于「全显示」，只有画过的瓦片才存在。
@@ -84,7 +89,7 @@ export class TileSurface {
     this.h = h;
     this.ts = ts;
     this.blank = blank;
-    this.tiles = new Map();   // "tx,ty" -> { canvas, ctx, tx, ty }
+    this.tiles = new Map<string, Tile>();   // "tx,ty" -> { canvas, ctx, tx, ty }
     this._bbox = null;        // 惰性计算的包围盒
   }
 
@@ -121,7 +126,7 @@ export class TileSurface {
       const canvas = document.createElement('canvas');
       canvas.width = r.w;
       canvas.height = r.h;
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d')!;
       if (this.blank) {
         ctx.fillStyle = this.blank;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -284,12 +289,12 @@ export class TileSurface {
     const c = document.createElement('canvas');
     c.width = Math.max(1, this.w);
     c.height = Math.max(1, this.h);
-    this.drawInto(c.getContext('2d'));
+    this.drawInto(c.getContext('2d')!);
     return c;
   }
 
   toImageData(): ImageData {
-    return this.toCanvas().getContext('2d').getImageData(0, 0, this.w, this.h);
+    return this.toCanvas().getContext('2d')!.getImageData(0, 0, this.w, this.h);
   }
 
   /** 取一块区域为新画布 */
@@ -297,7 +302,7 @@ export class TileSurface {
     const c = document.createElement('canvas');
     c.width = Math.max(1, w);
     c.height = Math.max(1, h);
-    this.drawIntoRegion(c.getContext('2d'), x, y, w, h);
+    this.drawIntoRegion(c.getContext('2d')!, x, y, w, h);
     return c;
   }
 
@@ -369,7 +374,7 @@ export class TileSurface {
         const probe = document.createElement('canvas');
         probe.width = iw;
         probe.height = ih;
-        const pctx = probe.getContext('2d', { willReadFrequently: true });
+        const pctx = probe.getContext('2d', { willReadFrequently: true })!;
         pctx.drawImage(canvas, r.x, r.y, iw, ih, 0, 0, iw, ih);
         const data = pctx.getImageData(0, 0, iw, ih).data;
         let hasPixel = false;

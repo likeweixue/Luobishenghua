@@ -2,6 +2,22 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta26（2026-10-30）
+
+TypeScript strict 收紧（第一批：瓦片层）。
+
+工程：
+- 新增 `tsconfig.strict.json`（`strict:true`、`noEmit`），当前只纳入
+  `src/tiles.ts`；`npm run typecheck:strict`
+- `TileSurface` 去掉 `[key:string]: any` 索引签名，显式声明
+  w / h / ts / blank / tiles / _bbox；`key` / `scratchCtx` / 全部方法参数
+  显式类型
+- 2D context 统一用非空断言，消除 strictNullChecks 下的隐患
+- CI 在普通 typecheck 之后增加 strict typecheck，再 build / 校验 app/js / 测试
+- 8 个测试页 / 279 项 + app-e2e 全部通过；Tauri debug .app 构建通过
+- 版本、README、CHANGELOG、TECH_STACK、截图更新到 beta26
+- 下一步：gpu / engine / layers 加入 strict，再 history / transform / UI
+
 ## beta25（2026-10-30）
 
 TypeScript 迁移（第五批：剩余全部运行时模块）。

@@ -4,7 +4,7 @@
 
 1. **Photoshop 桌面版不是 HTML/CSS/JS 做的。** 它的核心是 C++（图像合成、色彩管理、文件格式、GPU、插件），界面是原生框架；只有扩展面板 / 脚本层使用 JavaScript（UXP / ExtendScript）。CSP 同样以 C++ 核心 + 原生界面为主。
 2. **HTML/CSS/JS 做 UI 完全没问题，而且很适合你现在的阶段。** 你的界面、面板、对话框、快捷键、主题，用 Web 技术迭代速度远快于原生 UI。
-3. **决定绘画软件上限的不是 CSS/HTML，而是渲染与笔刷管线。** 目前项目以 Canvas 2D + JS 为主，beta13 起简单平铺图层已走 WebGL2，beta14 面板标签已可自由拖拽重组，beta15 组 / 蒙版 / 混合模式也上了 GPU，beta16 瓦片走纹理数组 + instanced draw，beta18 简单图层笔画 GPU 预览 + 抬笔批量提交，beta19 应用端到端回归，beta20 OffscreenCanvas + Worker 抬笔提交，beta21 核心 GPU/瓦片/Worker 迁移 TS，beta22 engine/layers 迁移 TS，beta23 history/transform/brushes 迁移 TS，beta24 main/dock/menu 迁移 TS，beta25 全部运行时模块迁移 TS，配合 Tauri 2 的 Rust 壳，是一个合理的起步架构；要往专业级走，继续把「剪贴蒙版 / 笔刷铺排 / 大图缩放」迁到 GPU（WebGL2 / WebGPU），把重活交给 WASM 或 Rust。
+3. **决定绘画软件上限的不是 CSS/HTML，而是渲染与笔刷管线。** 目前项目以 Canvas 2D + JS 为主，beta13 起简单平铺图层已走 WebGL2，beta14 面板标签已可自由拖拽重组，beta15 组 / 蒙版 / 混合模式也上了 GPU，beta16 瓦片走纹理数组 + instanced draw，beta18 简单图层笔画 GPU 预览 + 抬笔批量提交，beta19 应用端到端回归，beta20 OffscreenCanvas + Worker 抬笔提交，beta21 核心 GPU/瓦片/Worker 迁移 TS，beta22 engine/layers 迁移 TS，beta23 history/transform/brushes 迁移 TS，beta24 main/dock/menu 迁移 TS，beta25 全部运行时模块迁移 TS，beta26 tiles 打开 strict，配合 Tauri 2 的 Rust 壳，是一个合理的起步架构；要往专业级走，继续把「剪贴蒙版 / 笔刷铺排 / 大图缩放」迁到 GPU（WebGL2 / WebGPU），把重活交给 WASM 或 Rust。
 4. 如果目标是「专业绘画工具」而不是「PS 克隆」，**HTML/CSS/JS + Tauri + WebGPU/WASM** 是一条现实且成本可控的路线。如果目标是和 PS 正面竞争，最终仍然需要一个 C++/Rust 的像素核心。
 
 ---
@@ -39,7 +39,7 @@
 2. **笔刷铺排**：现在每落一个印章都走 2D canvas 绘制 + 读回；高密度笔刷、大笔尖、低间距时会掉帧。可以把印章批处理成顶点/实例，用 WebGL/WebGPU 一次画完。
 3. **主线程**：PSD 解析、ZIP、缩略图、自动保存都在主线程；大文件会卡 UI。需要 Worker / OffscreenCanvas / Rust 端处理。
 4. **色彩管理**：只有 sRGB 8 位；专业印刷 / HDR 需要 ICC、16 位、线性空间。
-5. **UI 工程化**：目前运行时 JS 约 10.5k 行；beta21 起 `gpu` / `tiles` / `brush-worker`，beta22 起 `engine` / `layers`，beta23 起 `history` / `transform` / `brushes`，beta24 起 `main` / `dock` / `menu`，beta25 起 paint / psd / abr 等全部运行时模块已有 TS 源与 tsc 构建；当前仍 `strict:false`。继续迁移到 TS + 轻量状态管理，不需要上 React。
+5. **UI 工程化**：目前运行时 JS 约 10.5k 行；beta21 起 `gpu` / `tiles` / `brush-worker`，beta22 起 `engine` / `layers`，beta23 起 `history` / `transform` / `brushes`，beta24 起 `main` / `dock` / `menu`，beta25 起 paint / psd / abr 等全部运行时模块已有 TS 源与 tsc 构建；beta26 起 `tiles` 已按 strict 检查，其余模块仍 `strict:false`。继续迁移到 TS + 轻量状态管理，不需要上 React。
 
 ## 4. 推荐演进路线
 
@@ -61,7 +61,7 @@
 > beta17 把 8 个测试页（279 项）接进无头 Chrome + CI；beta19 增加真实应用端到端。
 > beta18 已把简单图层的笔刷预览搬到 GPU，并在抬笔时批量提交；
 > beta20 把抬笔提交放进 Worker + OffscreenCanvas，主线程保留 before/after 快照；
-> beta21 完成 GPU / 瓦片 / Worker；beta22 engine / layers；beta23 history / transform / brushes；beta24 main / dock / menu；beta25 全部运行时模块完成 TS 化。下一步打开 strict 并补 PSD / 面板 E2E。
+> beta21 GPU / 瓦片 / Worker；beta22 engine / layers；beta23 history / transform / brushes；beta24 main / dock / menu；beta25 全部运行时模块完成 TS 化；beta26 tiles 打开 strict。下一步 gpu / engine / layers strict 与 PSD / 面板 E2E。
 
 - 在已落地的 WebGL2 简单 / 复杂合成（组 / 蒙版 / 混合）与纹理数组 + instanced draw 上继续做笔刷批绘制；后续评估 **WebGPU**（新设备优先），Canvas 2D 长期作为 fallback。
 - 笔刷印章改为 GPU 实例化/批绘制；瓦片作为纹理图集（atlas），避免每帧上传。

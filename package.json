@@ -11,6 +11,7 @@
     "build": "tauri build",
     "build:ts": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:strict": "tsc -p tsconfig.strict.json",
     "test": "node scripts/test-browser.mjs"
   },
   "devDependencies": {

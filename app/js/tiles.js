@@ -44,6 +44,12 @@ export function maskFromCanvas(canvas, w, h) {
     return s;
 }
 export class TileSurface {
+    w;
+    h;
+    ts;
+    blank;
+    tiles;
+    _bbox;
     /**
      * @param blank 新建瓦片时的底色（默认透明）。蒙版用 '#ffffff'：
      *              没被碰过的区域等于「全显示」，只有画过的瓦片才存在。
