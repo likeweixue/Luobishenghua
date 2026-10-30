@@ -2,6 +2,24 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta25（2026-10-30）
+
+TypeScript 迁移（第五批：剩余全部运行时模块）。
+
+工程：
+- 新增 `src/paint.ts`、`psd.ts`、`abr.ts`、`project.ts`、`zip.ts`、`home.ts`、
+  `colorpicker.ts`、`rulers.ts`、`navigator.ts`、`colorwheel.ts`、
+  `selection.ts`、`dynamics.ts`、`idb.ts`、`icons.ts`
+- 删除上一批为这些 JS 模块添加的 `src/*.d.ts` 声明垫片；所有 import 现在
+  直接指向 TS 源，tsc 生成完整的 `app/js`
+- paint 的 floodFill / drawGradient / Smudge、psd 的 readPSD / writePSD、
+  project 的 serializeProject / deserializeProject、colorpicker / zip / home /
+  selection / dynamics 等公开 API 已类型化
+- CI 生成文件校验从逐文件列表改成整个 `app/js` 目录
+- 8 个测试页 / 279 项 + app-e2e 全部通过；Tauri debug .app 构建通过
+- 版本、README、CHANGELOG、TECH_STACK、截图更新到 beta25
+- 下一步：打开 strict、补 PSD 打开 / 保存 / 面板拖拽 E2E
+
 ## beta24（2026-10-30）
 
 TypeScript 迁移（第四批：main / dock / menu）。
