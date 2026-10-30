@@ -2,6 +2,24 @@
 
 版本约定：每次迭代 +1（betaN）。随源码发布。
 
+## beta24（2026-10-30）
+
+TypeScript 迁移（第四批：main / dock / menu）。
+
+工程：
+- 新增 `src/main.ts`、`src/dock.ts`、`src/menu.ts`；tsc 生成
+  `app/js/main.js` / `dock.js` / `menu.js`，运行时路径不变
+- 新增 `src/globals.d.ts`：Tauri 注入对象、`window.__lbsh`、迁移期 DOM
+  动态属性访问
+- 仍为 JS 的模块（paint / psd / abr / project / home / colorpicker / rulers /
+  navigator / colorwheel / selection / dynamics / idb / icons）暂时用
+  `src/*.d.ts` 声明文件接住类型，运行时仍加载 app/js 里的 JS
+- main / dock / menu 内部仍用 any / 索引签名过渡，strict:false
+- CI 生成文件校验扩展到 main.js / dock.js / menu.js
+- 8 个测试页 / 279 项 + app-e2e 全部通过；Tauri debug .app 构建通过
+- 版本、README、CHANGELOG、TECH_STACK、截图更新到 beta24
+- 下一步：paint / psd / abr 等工具模块迁移，再逐步打开 strict
+
 ## beta23（2026-10-30）
 
 TypeScript 分模块迁移（第三批：history / transform / brushes）。
